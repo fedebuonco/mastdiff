@@ -1,0 +1,32 @@
+[
+  {
+    "directory": "/Users/fede/Desktop/astdiff/examples/sample_project/build",
+    "file": "/Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp",
+    "command": "c++ -std=c++17 -O2 -Wall -Wextra -I/Users/fede/Desktop/astdiff/examples/sample_project/include -o /Users/fede/Desktop/astdiff/examples/sample_project/build/main.o -c /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp",
+    "output": "/Users/fede/Desktop/astdiff/examples/sample_project/build/main.o"
+  },
+  {
+    "directory": "/Users/fede/Desktop/astdiff/examples/sample_project/build",
+    "file": "/Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp",
+    "command": "c++ -std=c++17 -O2 -Wall -Wextra -I/Users/fede/Desktop/astdiff/examples/sample_project/include -o /Users/fede/Desktop/astdiff/examples/sample_project/build/entity.o -c /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp",
+    "output": "/Users/fede/Desktop/astdiff/examples/sample_project/build/entity.o"
+  },
+  {
+    "directory": "/Users/fede/Desktop/astdiff/examples/sample_project/build",
+    "file": "/Users/fede/Desktop/astdiff/examples/sample_project/src/renderer.cpp",
+    "command": "c++ -std=c++17 -O2 -Wall -Wextra -I/Users/fede/Desktop/astdiff/examples/sample_project/include -o /Users/fede/Desktop/astdiff/examples/sample_project/build/renderer.o -c /Users/fede/Desktop/astdiff/examples/sample_project/src/renderer.cpp",
+    "output": "/Users/fede/Desktop/astdiff/examples/sample_project/build/renderer.o"
+  },
+  {
+    "directory": "/Users/fede/Desktop/astdiff/examples/sample_project/build",
+    "file": "/Users/fede/Desktop/astdiff/examples/sample_project/src/physics.cpp",
+    "command": "c++ -std=c++17 -O2 -Wall -Wextra -I/Users/fede/Desktop/astdiff/examples/sample_project/include -o /Users/fede/Desktop/astdiff/examples/sample_project/build/physics.o -c /Users/fede/Desktop/astdiff/examples/sample_project/src/physics.cpp",
+    "output": "/Users/fede/Desktop/astdiff/examples/sample_project/build/physics.o"
+  },
+  {
+    "directory": "/Users/fede/Desktop/astdiff/examples/sample_project/build",
+    "file": "/Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp",
+    "command": "c++ -std=c++17 -O2 -Wall -Wextra -I/Users/fede/Desktop/astdiff/examples/sample_project/include -o /Users/fede/Desktop/astdiff/examples/sample_project/build/audio.o -c /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp",
+    "output": "/Users/fede/Desktop/astdiff/examples/sample_project/build/audio.o"
+  }
+]
