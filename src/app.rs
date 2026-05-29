@@ -1,12 +1,16 @@
 use std::collections::HashSet;
+use std::fs;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::ast_diff::{
     compute_ast_diff, filter_rows, parse_single, row_has_children, visible_rows,
     AstDiffResult, AstLine,
 };
 use crate::export;
+use crate::input::TextInput;
+use crate::project::TranslationUnit;
+use crate::search::{parse_query, search_project, SearchQuery, SearchResult};
 use crate::text_diff::{compute_diff, context_view, hunk_positions, DiffLine};
 
 // ── Modes & enums ─────────────────────────────────────────────────────────
@@ -16,6 +20,8 @@ pub enum AppMode {
     TextDiff,
     AstDiff,
     SingleFile,
+    ProjectBrowser,
+    Search,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,6 +107,26 @@ pub struct App {
     pub single_filter: AstFilter,
     pub single_filter_rows: Vec<usize>,
 
+    // ---- project browser
+    pub project_files: Vec<TranslationUnit>,
+    pub project_filtered: Vec<usize>, // indices into project_files
+    pub project_cursor: usize,
+    pub project_filter: TextInput,
+
+    // ---- search
+    pub search_input: TextInput,
+    pub search_query: SearchQuery,
+    pub search_results: Vec<SearchResult>,
+    pub search_selected: usize,
+    pub search_scroll: usize,         // top of the results list
+    pub search_source_lines: Vec<String>,
+    pub search_source_scroll: usize,
+    pub search_source_highlight: usize, // line to highlight (abs line in file)
+    pub search_ast_nodes: Vec<AstLine>,
+    pub search_ast_scroll: usize,
+    pub search_ast_highlight: usize,  // index in search_ast_nodes to highlight
+    pub search_prev_mode: AppMode,    // mode to return to on Esc
+
     // ---- UI
     pub should_quit: bool,
     pub status_msg: String,
@@ -149,6 +175,22 @@ impl App {
             single_cursor: 0,
             single_filter: AstFilter::All,
             single_filter_rows: vec![],
+            project_files: vec![],
+            project_filtered: vec![],
+            project_cursor: 0,
+            project_filter: TextInput::new(),
+            search_input: TextInput::new(),
+            search_query: parse_query(""),
+            search_results: vec![],
+            search_selected: 0,
+            search_scroll: 0,
+            search_source_lines: vec![],
+            search_source_scroll: 0,
+            search_source_highlight: 0,
+            search_ast_nodes: vec![],
+            search_ast_scroll: 0,
+            search_ast_highlight: 0,
+            search_prev_mode: AppMode::TextDiff,
             should_quit: false,
             status_msg: Self::text_diff_hint(false),
         }
@@ -194,9 +236,85 @@ impl App {
             single_cursor: 0,
             single_filter: AstFilter::All,
             single_filter_rows,
+            project_files: vec![],
+            project_filtered: vec![],
+            project_cursor: 0,
+            project_filter: TextInput::new(),
+            search_input: TextInput::new(),
+            search_query: parse_query(""),
+            search_results: vec![],
+            search_selected: 0,
+            search_scroll: 0,
+            search_source_lines: vec![],
+            search_source_scroll: 0,
+            search_source_highlight: 0,
+            search_ast_nodes: vec![],
+            search_ast_scroll: 0,
+            search_ast_highlight: 0,
+            search_prev_mode: AppMode::SingleFile,
             should_quit: false,
             status_msg: String::from(
                 " q:quit  j/k:scroll  s/e:select  Enter:AST of selection  Space:fold  f:filter ",
+            ),
+        }
+    }
+
+    pub fn new_project(files: Vec<TranslationUnit>, dir_path: String) -> Self {
+        let n = files.len();
+        let project_filtered: Vec<usize> = (0..n).collect();
+        Self {
+            left_path: dir_path.clone(),
+            right_path: dir_path,
+            left_lines: vec![],
+            right_lines: vec![],
+            single_file: false,
+            diff_lines: vec![],
+            scroll: 0,
+            cursor: 0,
+            selection_start: None,
+            selection_end: None,
+            ignore_ws: false,
+            inline_diff: false,
+            context_only: false,
+            context_lines: 3,
+            context_indices: vec![],
+            unified_view: false,
+            hunk_pos: vec![],
+            current_hunk: 0,
+            mode: AppMode::ProjectBrowser,
+            ast_result: None,
+            ast_scroll: 0,
+            ast_cursor: 0,
+            ast_collapsed: HashSet::new(),
+            ast_filter: AstFilter::All,
+            ast_visible: vec![],
+            ast_filter_rows: vec![],
+            single_ast: vec![],
+            single_collapsed: HashSet::new(),
+            single_visible: vec![],
+            single_scroll: 0,
+            single_cursor: 0,
+            single_filter: AstFilter::All,
+            single_filter_rows: vec![],
+            project_files: files,
+            project_filtered,
+            project_cursor: 0,
+            project_filter: TextInput::new(),
+            search_input: TextInput::new(),
+            search_query: parse_query(""),
+            search_results: vec![],
+            search_selected: 0,
+            search_scroll: 0,
+            search_source_lines: vec![],
+            search_source_scroll: 0,
+            search_source_highlight: 0,
+            search_ast_nodes: vec![],
+            search_ast_scroll: 0,
+            search_ast_highlight: 0,
+            search_prev_mode: AppMode::ProjectBrowser,
+            should_quit: false,
+            status_msg: String::from(
+                " j/k:navigate  Enter:open  /:search  q:quit ",
             ),
         }
     }
@@ -222,6 +340,8 @@ impl App {
             AppMode::TextDiff => self.on_text_diff(key),
             AppMode::AstDiff => self.on_ast_diff(key),
             AppMode::SingleFile => self.on_single_file(key),
+            AppMode::ProjectBrowser => self.on_project_browser(key),
+            AppMode::Search => self.on_search(key),
         }
     }
 
@@ -803,5 +923,252 @@ impl App {
             " q:quit  s/e:select  Enter:AST  n/N:hunk  u:unified  c:context  w:ws({})  i:inline  x:patch  X:html ",
             if ignore_ws { "ON" } else { "OFF" }
         )
+    }
+
+    // ── Project browser mode ──────────────────────────────────────────────
+
+    fn on_project_browser(&mut self, key: KeyEvent) {
+        let n = self.project_filtered.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.project_cursor > 0 {
+                    self.project_cursor -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.project_cursor + 1 < n {
+                    self.project_cursor += 1;
+                }
+            }
+            KeyCode::PageUp => self.project_cursor = self.project_cursor.saturating_sub(20),
+            KeyCode::PageDown => self.project_cursor = (self.project_cursor + 20).min(n.saturating_sub(1)),
+            KeyCode::Home | KeyCode::Char('g') => self.project_cursor = 0,
+            KeyCode::End | KeyCode::Char('G') => self.project_cursor = n.saturating_sub(1),
+
+            // Filter by filename
+            KeyCode::Char('/') => {
+                self.project_filter.clear();
+                self.status_msg = String::from(" Type to filter files. Esc:clear  Enter:done ");
+            }
+            KeyCode::Backspace => {
+                self.project_filter.backspace();
+                self.rebuild_project_filter();
+            }
+            KeyCode::Char(c) if c != 'q' => {
+                self.project_filter.push(c);
+                self.rebuild_project_filter();
+                self.project_cursor = 0;
+            }
+
+            // Open selected file
+            KeyCode::Enter => {
+                if let Some(&idx) = self.project_filtered.get(self.project_cursor) {
+                    let path = self.project_files[idx].file_path.clone();
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        *self = App::new_single(content, path);
+                    } else {
+                        self.status_msg = format!(" Cannot read file. ");
+                    }
+                }
+            }
+
+            // Open search across project
+            KeyCode::Char('s') => {
+                self.search_input.clear();
+                self.search_results.clear();
+                self.search_selected = 0;
+                self.search_prev_mode = AppMode::ProjectBrowser;
+                self.mode = AppMode::Search;
+                self.status_msg = String::from(
+                    " Type query (fn:/call:/var:/class:/type:/include:)  Enter:search  Esc:back ",
+                );
+            }
+
+            KeyCode::Esc => {
+                self.project_filter.clear();
+                self.rebuild_project_filter();
+            }
+
+            _ => {}
+        }
+    }
+
+    fn rebuild_project_filter(&mut self) {
+        let filter = self.project_filter.as_str().to_lowercase();
+        self.project_filtered = (0..self.project_files.len())
+            .filter(|&i| {
+                filter.is_empty()
+                    || self.project_files[i]
+                        .file_path
+                        .to_lowercase()
+                        .contains(&filter)
+            })
+            .collect();
+        self.project_cursor = self.project_cursor.min(self.project_filtered.len().saturating_sub(1));
+    }
+
+    // ── Search mode ───────────────────────────────────────────────────────
+
+    fn on_search(&mut self, key: KeyEvent) {
+        match key.code {
+            // ── Input editing
+            KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
+                self.search_input.push(c);
+            }
+            KeyCode::Backspace => {
+                self.search_input.backspace();
+            }
+            KeyCode::Delete => {
+                self.search_input.delete_forward();
+            }
+            KeyCode::Left => {
+                self.search_input.move_left();
+            }
+            KeyCode::Right => {
+                self.search_input.move_right();
+            }
+            KeyCode::Home => {
+                self.search_input.move_home();
+            }
+            KeyCode::End => {
+                self.search_input.move_end();
+            }
+            KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => {
+                self.search_input.move_home();
+            }
+            KeyCode::Char('e') if key.modifiers == KeyModifiers::CONTROL => {
+                self.search_input.move_end();
+            }
+            KeyCode::Char('k') if key.modifiers == KeyModifiers::CONTROL => {
+                self.search_input.kill_to_end();
+            }
+
+            // ── Run search
+            KeyCode::Enter => {
+                self.run_search();
+            }
+
+            // ── Navigate results
+            KeyCode::Up => {
+                if self.search_selected > 0 {
+                    self.search_selected -= 1;
+                    self.load_search_result(self.search_selected);
+                }
+            }
+            KeyCode::Down => {
+                if self.search_selected + 1 < self.search_results.len() {
+                    self.search_selected += 1;
+                    self.load_search_result(self.search_selected);
+                }
+            }
+            KeyCode::PageUp => {
+                self.search_selected = self.search_selected.saturating_sub(10);
+                self.load_search_result(self.search_selected);
+            }
+            KeyCode::PageDown => {
+                let n = self.search_results.len();
+                self.search_selected = (self.search_selected + 10).min(n.saturating_sub(1));
+                self.load_search_result(self.search_selected);
+            }
+
+            // ── Open result in single-file mode
+            KeyCode::Char('o') | KeyCode::Char(' ') => {
+                self.open_search_result_as_single();
+            }
+
+            // ── Back
+            KeyCode::Esc => {
+                self.mode = self.search_prev_mode.clone();
+                self.status_msg = String::from(" j/k:navigate  Enter:open  s:search  q:quit ");
+            }
+
+            _ => {}
+        }
+    }
+
+    fn run_search(&mut self) {
+        let raw = self.search_input.as_str().to_string();
+        if raw.is_empty() {
+            self.status_msg = String::from(" Empty query. Type a search term. ");
+            return;
+        }
+
+        self.search_query = parse_query(&raw);
+
+        let file_paths: Vec<String> = self
+            .project_files
+            .iter()
+            .map(|tu| tu.file_path.clone())
+            .collect();
+
+        let results = search_project(&file_paths, &self.search_query);
+        let n = results.len();
+        self.search_results = results;
+        self.search_selected = 0;
+        self.search_scroll = 0;
+
+        if !self.search_results.is_empty() {
+            self.load_search_result(0);
+        } else {
+            self.search_source_lines = vec![];
+            self.search_ast_nodes = vec![];
+        }
+
+        self.status_msg = format!(
+            " {} results for {:?}  ↑↓:navigate  o:open  Esc:back ",
+            n, raw
+        );
+    }
+
+    fn load_search_result(&mut self, idx: usize) {
+        let Some(result) = self.search_results.get(idx).cloned() else {
+            return;
+        };
+
+        // Clamp results scroll so selected is visible (handled by renderer, but track scroll)
+        self.search_scroll = if self.search_selected < self.search_scroll {
+            self.search_selected
+        } else {
+            self.search_scroll
+        };
+
+        // Load source lines
+        let Ok(content) = fs::read_to_string(&result.file_path) else {
+            return;
+        };
+        self.search_source_lines = content.lines().map(|l| l.to_string()).collect();
+        self.search_source_highlight = result.line;
+        self.search_source_scroll = result.line.saturating_sub(5);
+
+        // Parse AST
+        let nodes = parse_single(&content).unwrap_or_default();
+        // Find the node at the match line with matching kind
+        let highlight = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.source_row == result.line)
+            .max_by_key(|(_, n)| {
+                if n.kind == result.node_kind { 1000 + n.depth } else { n.depth }
+            })
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+
+        self.search_ast_nodes = nodes;
+        self.search_ast_highlight = highlight;
+        self.search_ast_scroll = highlight.saturating_sub(5);
+    }
+
+    fn open_search_result_as_single(&mut self) {
+        let Some(result) = self.search_results.get(self.search_selected).cloned() else {
+            return;
+        };
+        if let Ok(content) = fs::read_to_string(&result.file_path) {
+            let path = result.file_path.clone();
+            let target_line = result.line;
+            *self = App::new_single(content, path);
+            // Pre-scroll to the match line
+            self.cursor = target_line;
+            self.scroll = target_line.saturating_sub(5);
+        }
     }
 }

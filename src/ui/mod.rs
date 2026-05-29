@@ -10,6 +10,8 @@ use crate::app::{App, AppMode};
 
 mod ast_view;
 mod diff_view;
+mod project_view;
+mod search_view;
 mod single_view;
 
 pub fn render(f: &mut Frame, app: &mut App, _terminal_height: usize) {
@@ -35,6 +37,12 @@ pub fn render(f: &mut Frame, app: &mut App, _terminal_height: usize) {
             app.clamp_scroll(view_height);
             app.clamp_single_scroll(view_height);
             single_view::render(f, app, chunks[0]);
+        }
+        AppMode::ProjectBrowser => {
+            project_view::render(f, app, chunks[0]);
+        }
+        AppMode::Search => {
+            search_view::render(f, app, chunks[0]);
         }
     }
 

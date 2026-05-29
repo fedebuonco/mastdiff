@@ -6,35 +6,49 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::{fs, io, panic, time::Duration};
+use std::{fs, io, panic, path::Path, time::Duration};
 
 mod app;
 mod ast_diff;
 mod export;
+mod input;
+mod project;
+mod search;
 mod text_diff;
 mod ui;
 
 use app::App;
 
 #[derive(Parser)]
-#[command(name = "astdiff", about = "C++ diff visualizer with AST support")]
+#[command(name = "astdiff", about = "C++ diff visualizer with AST + project search")]
 struct Cli {
-    /// Left file (or single file for AST browse mode)
+    /// Path to a C++ file, a second file to diff against, or a project directory
     left: String,
-    /// Right file (optional — omit for single-file AST browse)
+    /// Second file to diff (optional)
     right: Option<String>,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let left_path = Path::new(&cli.left);
 
-    let left_content = fs::read_to_string(&cli.left)?;
-
-    let app = if let Some(ref right_path) = cli.right {
-        let right_content = fs::read_to_string(right_path)?;
-        App::new_diff(left_content, right_content, cli.left.clone(), right_path.clone())
+    let app = if left_path.is_dir() {
+        // Project browser mode
+        let files = project::load(left_path)?;
+        if files.is_empty() {
+            eprintln!("No C++ source files found in {:?}", left_path);
+            std::process::exit(1);
+        }
+        App::new_project(files, cli.left.clone())
+    } else if let Some(ref right_path) = cli.right {
+        // Two-file diff mode
+        let left = fs::read_to_string(&cli.left)?;
+        let right = fs::read_to_string(right_path)?;
+        App::new_diff(left, right, cli.left.clone(), right_path.clone())
     } else {
-        App::new_single(left_content, cli.left.clone())
+        // Single-file AST browse mode
+        let content = fs::read_to_string(&cli.left)?;
+        App::new_single(content, cli.left.clone())
     };
 
     enable_raw_mode()?;
