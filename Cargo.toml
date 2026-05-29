@@ -1,0 +1,17 @@
+[package]
+name = "astdiff"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "astdiff"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "=0.28.1"
+crossterm = { version = "=0.28.1", features = ["event-stream"] }
+tree-sitter = "0.22"
+tree-sitter-cpp = "0.22"
+similar = "2"
+clap = { version = "=4.5.38", features = ["derive"] }
+anyhow = "1"
