@@ -1,0 +1,634 @@
+[INFO ] astdiff — astdiff starting
+[INFO ] astdiff — single-file mode: examples/sample_project/src/audio.cpp
+[INFO ] astdiff — astdiff starting
+[INFO ] astdiff — project mode: 5 translation units in "examples/sample_project"
+[INFO ] astdiff::app — opening search overlay from project browser
+[INFO ] astdiff::app — run_search: "call:update"
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n(call_expression function: (scoped_identifier name: (identifier) @match))\n" filter="update" files=5
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/physics.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/renderer.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[INFO ] astdiff::search — search: 0 results
+[INFO ] astdiff::app — run_search: "call:update"
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n(call_expression function: (scoped_identifier name: (identifier) @match))\n" filter="update" files=5
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/physics.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/renderer.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[INFO ] astdiff::search — search: 0 results
+[INFO ] astdiff::app — run_search: "update"
+[INFO ] astdiff::search — search: mode=grep ts_query="update" filter="" files=5
+[INFO ] astdiff::search — search: 11 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:95 kind=text capture=@
+[INFO ] astdiff::app — run_search: "update"
+[INFO ] astdiff::search — search: mode=grep ts_query="update" filter="" files=5
+[INFO ] astdiff::search — search: 11 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:95 kind=text capture=@
+[INFO ] astdiff::app — run_search: "update"
+[INFO ] astdiff::search — search: mode=grep ts_query="update" filter="" files=5
+[INFO ] astdiff::search — search: 11 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:95 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #1 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:13 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #2 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:16 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #3 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:67 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #4 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:69 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #5 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:51 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #6 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:124 kind=text capture=@
+[INFO ] astdiff::app — run_search: "call:update"
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n(call_expression function: (scoped_identifier name: (identifier) @match))\n" filter="update" files=5
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/physics.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/renderer.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[WARN ] astdiff::search — query compile error in /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp: Query error at 4:29. Invalid node type scoped_identifier
+[INFO ] astdiff::search — search: 0 results
+[INFO ] astdiff — astdiff starting
+[INFO ] astdiff — project mode: 5 translation units in "examples/sample_project"
+[INFO ] astdiff::app — opening grep search from project browser
+[INFO ] astdiff::app — run_search: "audio" grep_mode=true
+[INFO ] astdiff::search — search: mode=grep ts_query="audio" filter="" files=5
+[INFO ] astdiff::search — search: 37 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:1 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #1 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:8 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #2 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:10 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #3 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:12 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #4 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:15 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #5 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:19 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #6 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:22 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #7 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:25 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #8 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:27 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #9 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:30 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #10 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:34 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #11 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:39 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #12 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:41 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #13 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:42 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #14 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:46 kind=text capture=@
+[INFO ] astdiff::app — opening grep search from project browser
+[INFO ] astdiff::app — opening AST search from project browser
+[INFO ] astdiff::app — run_search: "call:main" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n" filter="main" files=5
+[INFO ] astdiff::search — search: 0 results
+[ERROR] astdiff — PANIC: panicked at src/ui/search_view.rs:248:33:
+slice index starts at 346 but ends at 0
+[INFO ] astdiff — astdiff starting
+[INFO ] astdiff — project mode: 5 translation units in "examples/sample_project"
+[INFO ] astdiff::app — opening grep search from project browser
+[INFO ] astdiff::app — opening AST search from project browser
+[INFO ] astdiff::app — run_search: "call:update" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n" filter="update" files=5
+[INFO ] astdiff::search — search: 5 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:16 kind=field_identifier capture=@match
+[INFO ] astdiff::app — run_search: "call:update" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n" filter="update" files=5
+[INFO ] astdiff::search — search: 5 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:16 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:69 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #2 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:124 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #3 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:125 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #4 /Users/fede/Desktop/astdiff/examples/sample_project/src/physics.cpp:71 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #3 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:125 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #2 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:124 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:69 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:16 kind=field_identifier capture=@match
+[INFO ] astdiff::app — run_search: "fn:update" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(function_definition\n  declarator: (function_declarator\n    declarator: (identifier) @match))\n" filter="update" files=5
+[INFO ] astdiff::search — search: 0 results
+[ERROR] astdiff — PANIC: panicked at src/ui/search_view.rs:248:33:
+slice index starts at 107 but ends at 0
+[INFO ] astdiff — astdiff starting
+[INFO ] astdiff — project mode: 5 translation units in "examples/sample_project"
+[INFO ] astdiff::app — opening AST search from project browser
+[INFO ] astdiff::app — run_search: "call:main" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n" filter="main" files=5
+[INFO ] astdiff::search — search: 0 results
+[INFO ] astdiff::app — run_search: "call:ma" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n" filter="ma" files=5
+[INFO ] astdiff::search — search: 2 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/physics.cpp:70 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 /Users/fede/Desktop/astdiff/examples/sample_project/src/physics.cpp:84 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/physics.cpp:70 kind=field_identifier capture=@match
+[INFO ] astdiff — astdiff exiting cleanly
+[INFO ] astdiff — astdiff starting
+[INFO ] astdiff — project mode: 5 translation units in "examples/sample_project"
+[INFO ] astdiff::app — opening AST search from project browser
+[INFO ] astdiff::app — run_search: "call:au" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n" filter="au" files=5
+[INFO ] astdiff::search — search: 1 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:76 kind=field_identifier capture=@match
+[INFO ] astdiff::app — run_search: "call:au" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n" filter="au" files=5
+[INFO ] astdiff::search — search: 1 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/audio.cpp:76 kind=field_identifier capture=@match
+[INFO ] astdiff::app — run_search: "call:main" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n" filter="main" files=5
+[INFO ] astdiff::search — search: 0 results
+[ERROR] astdiff — PANIC: panicked at src/ui/search_view.rs:248:33:
+slice index starts at 647 but ends at 0
+[INFO ] astdiff — astdiff starting
+[INFO ] astdiff — project mode: 5 translation units in "examples/sample_project"
+[INFO ] astdiff::app — opening AST search from project browser
+[INFO ] astdiff::app — run_search: "call:main" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n" filter="main" files=5
+[INFO ] astdiff::search — search: 0 results
+[INFO ] astdiff::app — run_search: "call:main" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n" filter="main" files=5
+[INFO ] astdiff::search — search: 0 results
+[INFO ] astdiff::app — run_search: "call:up" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(call_expression function: (identifier) @match)\n(call_expression function: (field_expression field: (field_identifier) @match))\n" filter="up" files=5
+[INFO ] astdiff::search — search: 5 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:16 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:69 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #2 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:124 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #3 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:125 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #4 /Users/fede/Desktop/astdiff/examples/sample_project/src/physics.cpp:71 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #3 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:125 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #4 /Users/fede/Desktop/astdiff/examples/sample_project/src/physics.cpp:71 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #3 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:125 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #2 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:124 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:69 kind=field_identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/entity.cpp:16 kind=field_identifier capture=@match
+[INFO ] astdiff::app — opening AST search from project browser
+[INFO ] astdiff::app — run_search: "fn:main" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(function_definition\n  declarator: (function_declarator\n    declarator: (identifier) @match))\n" filter="main" files=5
+[INFO ] astdiff::search — search: 1 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:93 kind=identifier capture=@match
+[INFO ] astdiff::app — run_search: "fn:main" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(function_definition\n  declarator: (function_declarator\n    declarator: (identifier) @match))\n" filter="main" files=5
+[INFO ] astdiff::search — search: 1 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:93 kind=identifier capture=@match
+[INFO ] astdiff — astdiff exiting cleanly
+[INFO ] astdiff — astdiff starting
+[INFO ] astdiff — project mode: 5 translation units in "examples/sample_project"
+[INFO ] astdiff::app — opening AST search from project browser
+[INFO ] astdiff::app — run_search: "fn:main" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(function_definition\n  declarator: (function_declarator\n    declarator: (identifier) @match))\n(function_definition\n  declarator: (pointer_declarator\n    declarator: (function_declarator\n      declarator: (identifier) @match)))\n(function_definition\n  declarator: (function_declarator\n    declarator: (qualified_identifier\n      name: (identifier) @match)))\n(function_definition\n  declarator: (pointer_declarator\n    declarator: (function_declarator\n      declarator: (qualified_identifier\n        name: (identifier) @match))))\n" filter="main" files=5
+[INFO ] astdiff::search — search: 1 results
+[DEBUG] astdiff::app — load_search_result: #0 /Users/fede/Desktop/astdiff/examples/sample_project/src/main.cpp:93 kind=identifier capture=@match
+[INFO ] astdiff — astdiff exiting cleanly
+[INFO ] astdiff — astdiff starting
+[INFO ] astdiff — project mode: 41 translation units in "examples/spdlog"
+[INFO ] astdiff::app — opening file: examples/spdlog/bench/async_bench.cpp
+[INFO ] astdiff — astdiff exiting cleanly
+[INFO ] astdiff — astdiff starting
+[INFO ] astdiff — project mode: 41 translation units in "examples/spdlog"
+[INFO ] astdiff::app — opening AST search from project browser
+[INFO ] astdiff::app — run_search: "fn:main" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(function_definition\n  declarator: (function_declarator\n    declarator: (identifier) @match))\n(function_definition\n  declarator: (pointer_declarator\n    declarator: (function_declarator\n      declarator: (identifier) @match)))\n(function_definition\n  declarator: (function_declarator\n    declarator: (qualified_identifier\n      name: (identifier) @match)))\n(function_definition\n  declarator: (pointer_declarator\n    declarator: (function_declarator\n      declarator: (qualified_identifier\n        name: (identifier) @match))))\n" filter="main" files=41
+[INFO ] astdiff::search — search: 6 results
+[DEBUG] astdiff::app — load_search_result: #0 examples/spdlog/bench/async_bench.cpp:68 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 examples/spdlog/bench/bench.cpp:119 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #2 examples/spdlog/bench/formatter-bench.cpp:56 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #3 examples/spdlog/bench/latency.cpp:84 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #4 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:894 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #5 examples/spdlog/example/example.cpp:35 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #4 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:894 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #3 examples/spdlog/bench/latency.cpp:84 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #2 examples/spdlog/bench/formatter-bench.cpp:56 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 examples/spdlog/bench/bench.cpp:119 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #0 examples/spdlog/bench/async_bench.cpp:68 kind=identifier capture=@match
+[INFO ] astdiff::app — run_search: "fn:log" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(function_definition\n  declarator: (function_declarator\n    declarator: (identifier) @match))\n(function_definition\n  declarator: (pointer_declarator\n    declarator: (function_declarator\n      declarator: (identifier) @match)))\n(function_definition\n  declarator: (function_declarator\n    declarator: (qualified_identifier\n      name: (identifier) @match)))\n(function_definition\n  declarator: (pointer_declarator\n    declarator: (function_declarator\n      declarator: (qualified_identifier\n        name: (identifier) @match))))\n" filter="log" files=41
+[INFO ] astdiff::search — search: 11 results
+[DEBUG] astdiff::app — load_search_result: #0 examples/spdlog/bench/bench.cpp:40 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 examples/spdlog/bench/latency.cpp:36 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #2 examples/spdlog/bench/latency.cpp:42 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #3 examples/spdlog/bench/latency.cpp:59 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #4 examples/spdlog/example/example.cpp:111 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #5 examples/spdlog/example/example.cpp:305 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #6 examples/spdlog/example/example.cpp:370 kind=identifier capture=@match
+[INFO ] astdiff::app — run_search: "param: index" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="(parameter_declaration declarator: (identifier) @match)" filter="index" files=41
+[INFO ] astdiff::search — search: 0 results
+[INFO ] astdiff::app — run_search: "param: in" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="(parameter_declaration declarator: (identifier) @match)" filter="in" files=41
+[INFO ] astdiff::search — search: 2 results
+[DEBUG] astdiff::app — load_search_result: #0 examples/spdlog/src/spdlog.cpp:25 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 examples/spdlog/tests/test_timezone.cpp:9 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #0 examples/spdlog/src/spdlog.cpp:25 kind=identifier capture=@match
+[INFO ] astdiff::app — run_search: "param: minute" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="(parameter_declaration declarator: (identifier) @match)" filter="minute" files=41
+[INFO ] astdiff::search — search: 1 results
+[DEBUG] astdiff::app — load_search_result: #0 examples/spdlog/tests/test_timezone.cpp:9 kind=identifier capture=@match
+[INFO ] astdiff — astdiff starting
+[DEBUG] astdiff::config — loading config from "/Users/fede/.config/astdiff/config.toml"
+[DEBUG] astdiff::config — config file not found or unreadable: No such file or directory (os error 2)
+[INFO ] astdiff — editor backend: vim
+[INFO ] astdiff — project mode: 41 translation units in "examples/spdlog"
+[INFO ] astdiff::app — opening grep search from project browser
+[INFO ] astdiff::app — run_search: "audio" grep_mode=true
+[INFO ] astdiff::search — search: mode=grep ts_query="audio" filter="" files=41
+[INFO ] astdiff::search — search: 0 results
+[INFO ] astdiff::app — run_search: "aud" grep_mode=true
+[INFO ] astdiff::search — search: mode=grep ts_query="aud" filter="" files=41
+[INFO ] astdiff::search — search: 0 results
+[INFO ] astdiff::app — run_search: "au" grep_mode=true
+[INFO ] astdiff::search — search: mode=grep ts_query="au" filter="" files=41
+[INFO ] astdiff::search — search: 458 results
+[DEBUG] astdiff::app — load_search_result: #0 examples/spdlog/bench/async_bench.cpp:43 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #1 examples/spdlog/bench/async_bench.cpp:55 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #2 examples/spdlog/bench/async_bench.cpp:93 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #3 examples/spdlog/bench/async_bench.cpp:109 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #4 examples/spdlog/bench/async_bench.cpp:110 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #5 examples/spdlog/bench/async_bench.cpp:111 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #6 examples/spdlog/bench/async_bench.cpp:124 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #7 examples/spdlog/bench/async_bench.cpp:125 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #8 examples/spdlog/bench/async_bench.cpp:126 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #9 examples/spdlog/bench/async_bench.cpp:149 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #10 examples/spdlog/bench/async_bench.cpp:161 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #11 examples/spdlog/bench/async_bench.cpp:165 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #12 examples/spdlog/bench/async_bench.cpp:166 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #13 examples/spdlog/bench/bench.cpp:33 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #14 examples/spdlog/bench/bench.cpp:46 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #15 examples/spdlog/bench/bench.cpp:48 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #16 examples/spdlog/bench/bench.cpp:54 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #17 examples/spdlog/bench/bench.cpp:57 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #18 examples/spdlog/bench/bench.cpp:63 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #19 examples/spdlog/bench/bench.cpp:65 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #20 examples/spdlog/bench/bench.cpp:70 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #21 examples/spdlog/bench/bench.cpp:73 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #22 examples/spdlog/bench/bench.cpp:85 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #23 examples/spdlog/bench/bench.cpp:88 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #24 examples/spdlog/bench/bench.cpp:93 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #25 examples/spdlog/bench/bench.cpp:96 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #26 examples/spdlog/bench/bench.cpp:102 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #27 examples/spdlog/bench/bench.cpp:104 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #28 examples/spdlog/bench/bench.cpp:109 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #29 examples/spdlog/bench/bench.cpp:113 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #30 examples/spdlog/bench/bench.cpp:120 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #31 examples/spdlog/bench/bench.cpp:121 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #32 examples/spdlog/bench/bench.cpp:152 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #33 examples/spdlog/bench/bench.cpp:153 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #34 examples/spdlog/bench/bench.cpp:157 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #35 examples/spdlog/bench/bench.cpp:158 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #36 examples/spdlog/bench/bench.cpp:173 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #37 examples/spdlog/bench/bench.cpp:182 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #38 examples/spdlog/bench/bench.cpp:186 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #39 examples/spdlog/bench/bench.cpp:187 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #40 examples/spdlog/bench/bench.cpp:195 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #41 examples/spdlog/bench/bench.cpp:201 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #42 examples/spdlog/bench/bench.cpp:202 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #43 examples/spdlog/bench/bench.cpp:203 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #44 examples/spdlog/bench/bench.cpp:204 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #45 examples/spdlog/bench/bench.cpp:209 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #46 examples/spdlog/bench/bench.cpp:210 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #47 examples/spdlog/bench/bench.cpp:212 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #48 examples/spdlog/bench/bench.cpp:224 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #49 examples/spdlog/bench/bench.cpp:226 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #50 examples/spdlog/bench/bench.cpp:230 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #51 examples/spdlog/bench/bench.cpp:231 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #52 examples/spdlog/bench/bench.cpp:232 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #53 examples/spdlog/bench/bench.cpp:233 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #54 examples/spdlog/bench/bench.cpp:238 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #55 examples/spdlog/bench/bench.cpp:239 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #56 examples/spdlog/bench/bench.cpp:241 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #57 examples/spdlog/bench/formatter-bench.cpp:12 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #58 examples/spdlog/bench/formatter-bench.cpp:21 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #59 examples/spdlog/bench/formatter-bench.cpp:32 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #60 examples/spdlog/bench/formatter-bench.cpp:33 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #61 examples/spdlog/bench/formatter-bench.cpp:50 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #62 examples/spdlog/bench/latency.cpp:22 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #63 examples/spdlog/bench/latency.cpp:26 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #64 examples/spdlog/bench/latency.cpp:31 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #65 examples/spdlog/bench/latency.cpp:38 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #66 examples/spdlog/bench/latency.cpp:43 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #67 examples/spdlog/bench/latency.cpp:45 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #68 examples/spdlog/bench/latency.cpp:54 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #69 examples/spdlog/bench/latency.cpp:61 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #70 examples/spdlog/bench/latency.cpp:65 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #71 examples/spdlog/bench/latency.cpp:72 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #72 examples/spdlog/bench/latency.cpp:77 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #73 examples/spdlog/bench/latency.cpp:92 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #74 examples/spdlog/bench/latency.cpp:95 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #75 examples/spdlog/bench/latency.cpp:105 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #76 examples/spdlog/bench/latency.cpp:111 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #77 examples/spdlog/bench/latency.cpp:119 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #78 examples/spdlog/bench/latency.cpp:130 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #79 examples/spdlog/bench/latency.cpp:134 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #80 examples/spdlog/bench/latency.cpp:143 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #81 examples/spdlog/bench/latency.cpp:149 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #82 examples/spdlog/bench/latency.cpp:158 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #83 examples/spdlog/bench/latency.cpp:161 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #84 examples/spdlog/bench/latency.cpp:171 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #85 examples/spdlog/bench/latency.cpp:178 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #86 examples/spdlog/bench/latency.cpp:185 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #87 examples/spdlog/bench/latency.cpp:193 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #88 examples/spdlog/bench/latency.cpp:201 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #89 examples/spdlog/bench/latency.cpp:202 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #90 examples/spdlog/bench/latency.cpp:203 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #91 examples/spdlog/bench/latency.cpp:210 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #92 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:432 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #93 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:563 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #94 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:802 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #95 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:864 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #96 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:882 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #97 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:915 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #98 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:916 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #99 examples/spdlog/example/example.cpp:28 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #100 examples/spdlog/example/example.cpp:58 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #101 examples/spdlog/example/example.cpp:87 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #102 examples/spdlog/example/example.cpp:113 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #103 examples/spdlog/example/example.cpp:115 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #104 examples/spdlog/example/example.cpp:121 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #105 examples/spdlog/example/example.cpp:127 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #106 examples/spdlog/example/example.cpp:134 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #107 examples/spdlog/example/example.cpp:140 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #108 examples/spdlog/example/example.cpp:162 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #109 examples/spdlog/example/example.cpp:164 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #110 examples/spdlog/example/example.cpp:167 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #111 examples/spdlog/example/example.cpp:225 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #112 examples/spdlog/example/example.cpp:227 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #113 examples/spdlog/example/example.cpp:231 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #114 examples/spdlog/example/example.cpp:247 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #115 examples/spdlog/example/example.cpp:254 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #116 examples/spdlog/example/example.cpp:258 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #117 examples/spdlog/example/example.cpp:278 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #118 examples/spdlog/example/example.cpp:286 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #119 examples/spdlog/example/example.cpp:307 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #120 examples/spdlog/example/example.cpp:317 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #121 examples/spdlog/example/example.cpp:341 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #122 examples/spdlog/example/example.cpp:364 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #123 examples/spdlog/example/example.cpp:370 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #124 examples/spdlog/example/example.cpp:372 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #125 examples/spdlog/example/example.cpp:374 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #126 examples/spdlog/example/example.cpp:375 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #127 examples/spdlog/example/example.cpp:380 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #128 examples/spdlog/example/example.cpp:393 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #129 examples/spdlog/src/bundled_fmtlib_format.cpp:17 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #130 examples/spdlog/src/bundled_fmtlib_format.cpp:22 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #131 examples/spdlog/src/bundled_fmtlib_format.cpp:24 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #132 examples/spdlog/src/bundled_fmtlib_format.cpp:29 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #133 examples/spdlog/src/bundled_fmtlib_format.cpp:31 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #134 examples/spdlog/src/bundled_fmtlib_format.cpp:38 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #135 examples/spdlog/src/bundled_fmtlib_format.cpp:40 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #136 examples/spdlog/tests/test_async.cpp:9 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #137 examples/spdlog/tests/test_async.cpp:14 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #138 examples/spdlog/tests/test_async.cpp:15 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #139 examples/spdlog/tests/test_async.cpp:29 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #140 examples/spdlog/tests/test_async.cpp:34 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #141 examples/spdlog/tests/test_async.cpp:35 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #142 examples/spdlog/tests/test_async.cpp:45 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #143 examples/spdlog/tests/test_async.cpp:50 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #144 examples/spdlog/tests/test_async.cpp:51 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #145 examples/spdlog/tests/test_async.cpp:65 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #146 examples/spdlog/tests/test_async.cpp:66 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #147 examples/spdlog/tests/test_async.cpp:78 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #148 examples/spdlog/tests/test_async.cpp:82 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #149 examples/spdlog/tests/test_async.cpp:83 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #150 examples/spdlog/tests/test_async.cpp:97 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #151 examples/spdlog/tests/test_async.cpp:98 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #152 examples/spdlog/tests/test_async.cpp:108 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #153 examples/spdlog/tests/test_async.cpp:112 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #154 examples/spdlog/tests/test_async.cpp:113 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #155 examples/spdlog/tests/test_async.cpp:126 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #156 examples/spdlog/tests/test_async.cpp:131 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #157 examples/spdlog/tests/test_async.cpp:132 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #158 examples/spdlog/tests/test_async.cpp:145 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #159 examples/spdlog/tests/test_async.cpp:160 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #160 examples/spdlog/tests/test_async.cpp:161 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #161 examples/spdlog/tests/test_async.cpp:162 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #162 examples/spdlog/tests/test_async.cpp:171 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #163 examples/spdlog/tests/test_async.cpp:172 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #164 examples/spdlog/tests/test_async.cpp:173 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #165 examples/spdlog/tests/test_async.cpp:182 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #166 examples/spdlog/tests/test_async.cpp:183 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #167 examples/spdlog/tests/test_async.cpp:184 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #168 examples/spdlog/tests/test_async.cpp:195 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #169 examples/spdlog/tests/test_async.cpp:197 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #170 examples/spdlog/tests/test_backtrace.cpp:7 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #171 examples/spdlog/tests/test_backtrace.cpp:33 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #172 examples/spdlog/tests/test_backtrace.cpp:45 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #173 examples/spdlog/tests/test_backtrace.cpp:51 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #174 examples/spdlog/tests/test_bin_to_hex.cpp:7 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #175 examples/spdlog/tests/test_bin_to_hex.cpp:13 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #176 examples/spdlog/tests/test_bin_to_hex.cpp:15 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #177 examples/spdlog/tests/test_bin_to_hex.cpp:20 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #178 examples/spdlog/tests/test_bin_to_hex.cpp:26 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #179 examples/spdlog/tests/test_bin_to_hex.cpp:28 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #178 examples/spdlog/tests/test_bin_to_hex.cpp:26 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #177 examples/spdlog/tests/test_bin_to_hex.cpp:20 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #176 examples/spdlog/tests/test_bin_to_hex.cpp:15 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #175 examples/spdlog/tests/test_bin_to_hex.cpp:13 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #174 examples/spdlog/tests/test_bin_to_hex.cpp:7 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #173 examples/spdlog/tests/test_backtrace.cpp:51 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #172 examples/spdlog/tests/test_backtrace.cpp:45 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #171 examples/spdlog/tests/test_backtrace.cpp:33 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #170 examples/spdlog/tests/test_backtrace.cpp:7 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #169 examples/spdlog/tests/test_async.cpp:197 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #168 examples/spdlog/tests/test_async.cpp:195 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #167 examples/spdlog/tests/test_async.cpp:184 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #166 examples/spdlog/tests/test_async.cpp:183 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #165 examples/spdlog/tests/test_async.cpp:182 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #164 examples/spdlog/tests/test_async.cpp:173 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #163 examples/spdlog/tests/test_async.cpp:172 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #162 examples/spdlog/tests/test_async.cpp:171 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #161 examples/spdlog/tests/test_async.cpp:162 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #160 examples/spdlog/tests/test_async.cpp:161 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #159 examples/spdlog/tests/test_async.cpp:160 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #158 examples/spdlog/tests/test_async.cpp:145 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #157 examples/spdlog/tests/test_async.cpp:132 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #156 examples/spdlog/tests/test_async.cpp:131 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #155 examples/spdlog/tests/test_async.cpp:126 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #154 examples/spdlog/tests/test_async.cpp:113 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #153 examples/spdlog/tests/test_async.cpp:112 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #152 examples/spdlog/tests/test_async.cpp:108 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #151 examples/spdlog/tests/test_async.cpp:98 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #150 examples/spdlog/tests/test_async.cpp:97 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #149 examples/spdlog/tests/test_async.cpp:83 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #148 examples/spdlog/tests/test_async.cpp:82 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #147 examples/spdlog/tests/test_async.cpp:78 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #146 examples/spdlog/tests/test_async.cpp:66 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #145 examples/spdlog/tests/test_async.cpp:65 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #144 examples/spdlog/tests/test_async.cpp:51 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #143 examples/spdlog/tests/test_async.cpp:50 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #142 examples/spdlog/tests/test_async.cpp:45 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #141 examples/spdlog/tests/test_async.cpp:35 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #140 examples/spdlog/tests/test_async.cpp:34 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #139 examples/spdlog/tests/test_async.cpp:29 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #138 examples/spdlog/tests/test_async.cpp:15 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #137 examples/spdlog/tests/test_async.cpp:14 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #136 examples/spdlog/tests/test_async.cpp:9 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #135 examples/spdlog/src/bundled_fmtlib_format.cpp:40 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #134 examples/spdlog/src/bundled_fmtlib_format.cpp:38 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #133 examples/spdlog/src/bundled_fmtlib_format.cpp:31 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #132 examples/spdlog/src/bundled_fmtlib_format.cpp:29 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #131 examples/spdlog/src/bundled_fmtlib_format.cpp:24 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #130 examples/spdlog/src/bundled_fmtlib_format.cpp:22 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #129 examples/spdlog/src/bundled_fmtlib_format.cpp:17 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #128 examples/spdlog/example/example.cpp:393 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #127 examples/spdlog/example/example.cpp:380 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #126 examples/spdlog/example/example.cpp:375 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #125 examples/spdlog/example/example.cpp:374 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #124 examples/spdlog/example/example.cpp:372 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #123 examples/spdlog/example/example.cpp:370 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #122 examples/spdlog/example/example.cpp:364 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #121 examples/spdlog/example/example.cpp:341 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #120 examples/spdlog/example/example.cpp:317 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #119 examples/spdlog/example/example.cpp:307 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #118 examples/spdlog/example/example.cpp:286 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #117 examples/spdlog/example/example.cpp:278 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #116 examples/spdlog/example/example.cpp:258 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #115 examples/spdlog/example/example.cpp:254 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #114 examples/spdlog/example/example.cpp:247 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #113 examples/spdlog/example/example.cpp:231 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #112 examples/spdlog/example/example.cpp:227 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #111 examples/spdlog/example/example.cpp:225 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #110 examples/spdlog/example/example.cpp:167 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #109 examples/spdlog/example/example.cpp:164 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #108 examples/spdlog/example/example.cpp:162 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #107 examples/spdlog/example/example.cpp:140 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #106 examples/spdlog/example/example.cpp:134 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #105 examples/spdlog/example/example.cpp:127 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #104 examples/spdlog/example/example.cpp:121 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #103 examples/spdlog/example/example.cpp:115 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #102 examples/spdlog/example/example.cpp:113 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #101 examples/spdlog/example/example.cpp:87 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #100 examples/spdlog/example/example.cpp:58 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #99 examples/spdlog/example/example.cpp:28 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #98 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:916 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #97 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:915 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #96 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:882 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #95 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:864 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #94 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:802 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #93 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:563 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #92 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:432 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #91 examples/spdlog/bench/latency.cpp:210 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #90 examples/spdlog/bench/latency.cpp:203 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #89 examples/spdlog/bench/latency.cpp:202 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #88 examples/spdlog/bench/latency.cpp:201 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #87 examples/spdlog/bench/latency.cpp:193 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #86 examples/spdlog/bench/latency.cpp:185 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #85 examples/spdlog/bench/latency.cpp:178 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #84 examples/spdlog/bench/latency.cpp:171 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #83 examples/spdlog/bench/latency.cpp:161 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #82 examples/spdlog/bench/latency.cpp:158 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #81 examples/spdlog/bench/latency.cpp:149 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #80 examples/spdlog/bench/latency.cpp:143 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #79 examples/spdlog/bench/latency.cpp:134 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #78 examples/spdlog/bench/latency.cpp:130 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #77 examples/spdlog/bench/latency.cpp:119 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #76 examples/spdlog/bench/latency.cpp:111 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #75 examples/spdlog/bench/latency.cpp:105 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #74 examples/spdlog/bench/latency.cpp:95 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #73 examples/spdlog/bench/latency.cpp:92 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #72 examples/spdlog/bench/latency.cpp:77 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #71 examples/spdlog/bench/latency.cpp:72 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #70 examples/spdlog/bench/latency.cpp:65 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #69 examples/spdlog/bench/latency.cpp:61 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #68 examples/spdlog/bench/latency.cpp:54 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #67 examples/spdlog/bench/latency.cpp:45 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #66 examples/spdlog/bench/latency.cpp:43 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #65 examples/spdlog/bench/latency.cpp:38 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #64 examples/spdlog/bench/latency.cpp:31 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #63 examples/spdlog/bench/latency.cpp:26 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #62 examples/spdlog/bench/latency.cpp:22 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #61 examples/spdlog/bench/formatter-bench.cpp:50 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #60 examples/spdlog/bench/formatter-bench.cpp:33 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #59 examples/spdlog/bench/formatter-bench.cpp:32 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #58 examples/spdlog/bench/formatter-bench.cpp:21 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #57 examples/spdlog/bench/formatter-bench.cpp:12 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #56 examples/spdlog/bench/bench.cpp:241 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #55 examples/spdlog/bench/bench.cpp:239 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #54 examples/spdlog/bench/bench.cpp:238 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #53 examples/spdlog/bench/bench.cpp:233 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #52 examples/spdlog/bench/bench.cpp:232 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #51 examples/spdlog/bench/bench.cpp:231 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #50 examples/spdlog/bench/bench.cpp:230 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #49 examples/spdlog/bench/bench.cpp:226 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #48 examples/spdlog/bench/bench.cpp:224 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #47 examples/spdlog/bench/bench.cpp:212 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #46 examples/spdlog/bench/bench.cpp:210 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #45 examples/spdlog/bench/bench.cpp:209 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #44 examples/spdlog/bench/bench.cpp:204 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #43 examples/spdlog/bench/bench.cpp:203 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #42 examples/spdlog/bench/bench.cpp:202 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #41 examples/spdlog/bench/bench.cpp:201 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #40 examples/spdlog/bench/bench.cpp:195 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #39 examples/spdlog/bench/bench.cpp:187 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #38 examples/spdlog/bench/bench.cpp:186 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #37 examples/spdlog/bench/bench.cpp:182 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #36 examples/spdlog/bench/bench.cpp:173 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #35 examples/spdlog/bench/bench.cpp:158 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #34 examples/spdlog/bench/bench.cpp:157 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #33 examples/spdlog/bench/bench.cpp:153 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #32 examples/spdlog/bench/bench.cpp:152 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #31 examples/spdlog/bench/bench.cpp:121 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #30 examples/spdlog/bench/bench.cpp:120 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #29 examples/spdlog/bench/bench.cpp:113 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #28 examples/spdlog/bench/bench.cpp:109 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #27 examples/spdlog/bench/bench.cpp:104 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #26 examples/spdlog/bench/bench.cpp:102 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #25 examples/spdlog/bench/bench.cpp:96 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #24 examples/spdlog/bench/bench.cpp:93 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #23 examples/spdlog/bench/bench.cpp:88 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #22 examples/spdlog/bench/bench.cpp:85 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #21 examples/spdlog/bench/bench.cpp:73 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #20 examples/spdlog/bench/bench.cpp:70 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #19 examples/spdlog/bench/bench.cpp:65 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #18 examples/spdlog/bench/bench.cpp:63 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #17 examples/spdlog/bench/bench.cpp:57 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #16 examples/spdlog/bench/bench.cpp:54 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #15 examples/spdlog/bench/bench.cpp:48 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #14 examples/spdlog/bench/bench.cpp:46 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #13 examples/spdlog/bench/bench.cpp:33 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #12 examples/spdlog/bench/async_bench.cpp:166 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #11 examples/spdlog/bench/async_bench.cpp:165 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #10 examples/spdlog/bench/async_bench.cpp:161 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #9 examples/spdlog/bench/async_bench.cpp:149 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #8 examples/spdlog/bench/async_bench.cpp:126 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #7 examples/spdlog/bench/async_bench.cpp:125 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #6 examples/spdlog/bench/async_bench.cpp:124 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #5 examples/spdlog/bench/async_bench.cpp:111 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #4 examples/spdlog/bench/async_bench.cpp:110 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #3 examples/spdlog/bench/async_bench.cpp:109 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #2 examples/spdlog/bench/async_bench.cpp:93 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #1 examples/spdlog/bench/async_bench.cpp:55 kind=text capture=@
+[DEBUG] astdiff::app — load_search_result: #0 examples/spdlog/bench/async_bench.cpp:43 kind=text capture=@
+[INFO ] astdiff::app — opening file: examples/spdlog/tests/test_fmt_helper.cpp
+[INFO ] astdiff — astdiff exiting cleanly
+[INFO ] astdiff — astdiff starting
+[DEBUG] astdiff::config — loading config from "/Users/fede/.config/astdiff/config.toml"
+[DEBUG] astdiff::config — config file not found or unreadable: No such file or directory (os error 2)
+[INFO ] astdiff — editor backend: vim
+[INFO ] astdiff — project mode: 41 translation units in "examples/spdlog"
+[INFO ] astdiff::app — opening AST search from project browser
+[INFO ] astdiff::app — run_search: "fn:f" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(function_definition\n  declarator: (function_declarator\n    declarator: (identifier) @match))\n(function_definition\n  declarator: (pointer_declarator\n    declarator: (function_declarator\n      declarator: (identifier) @match)))\n(function_definition\n  declarator: (function_declarator\n    declarator: (qualified_identifier\n      name: (identifier) @match)))\n(function_definition\n  declarator: (pointer_declarator\n    declarator: (function_declarator\n      declarator: (qualified_identifier\n        name: (identifier) @match))))\n" filter="f" files=41
+[INFO ] astdiff::search — search: 20 results
+[DEBUG] astdiff::app — load_search_result: #0 examples/spdlog/bench/async_bench.cpp:53 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 examples/spdlog/bench/async_bench.cpp:140 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #2 examples/spdlog/bench/formatter-bench.cpp:11 kind=identifier capture=@match
+[INFO ] astdiff::app — opening file: examples/spdlog/bench/async_bench.cpp
+[INFO ] astdiff — astdiff starting
+[DEBUG] astdiff::config — loading config from "/Users/fede/.config/astdiff/config.toml"
+[DEBUG] astdiff::config — config file not found or unreadable: No such file or directory (os error 2)
+[INFO ] astdiff — editor backend: vim
+[INFO ] astdiff — project mode: 41 translation units in "examples/spdlog"
+[INFO ] astdiff — astdiff starting
+[DEBUG] astdiff::config — loading config from "/Users/fede/.config/astdiff/config.toml"
+[DEBUG] astdiff::config — config file not found or unreadable: No such file or directory (os error 2)
+[INFO ] astdiff — editor backend: vim
+[INFO ] astdiff — project mode: 41 translation units in "examples/spdlog"
+[INFO ] astdiff::app — opening AST search from project browser
+[INFO ] astdiff::app — run_search: "fn:main" grep_mode=false
+[INFO ] astdiff::search — search: mode=ts-query ts_query="\n(function_definition\n  declarator: (function_declarator\n    declarator: (identifier) @match))\n(function_definition\n  declarator: (pointer_declarator\n    declarator: (function_declarator\n      declarator: (identifier) @match)))\n(function_definition\n  declarator: (function_declarator\n    declarator: (qualified_identifier\n      name: (identifier) @match)))\n(function_definition\n  declarator: (pointer_declarator\n    declarator: (function_declarator\n      declarator: (qualified_identifier\n        name: (identifier) @match))))\n" filter="main" files=41
+[INFO ] astdiff::search — search: 6 results
+[DEBUG] astdiff::app — load_search_result: #0 examples/spdlog/bench/async_bench.cpp:68 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 examples/spdlog/bench/bench.cpp:119 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #2 examples/spdlog/bench/formatter-bench.cpp:56 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #3 examples/spdlog/bench/latency.cpp:84 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #4 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:894 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #5 examples/spdlog/example/example.cpp:35 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #4 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:894 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #3 examples/spdlog/bench/latency.cpp:84 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #2 examples/spdlog/bench/formatter-bench.cpp:56 kind=identifier capture=@match
+[INFO ] astdiff — opening vim: examples/spdlog/bench/formatter-bench.cpp +56
+[DEBUG] astdiff::app — load_search_result: #1 examples/spdlog/bench/bench.cpp:119 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #0 examples/spdlog/bench/async_bench.cpp:68 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #1 examples/spdlog/bench/bench.cpp:119 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #2 examples/spdlog/bench/formatter-bench.cpp:56 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #3 examples/spdlog/bench/latency.cpp:84 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #4 examples/spdlog/build/CMakeFiles/3.31.5/CompilerIdCXX/CMakeCXXCompilerId.cpp:894 kind=identifier capture=@match
+[DEBUG] astdiff::app — load_search_result: #5 examples/spdlog/example/example.cpp:35 kind=identifier capture=@match

@@ -1,3 +1,18 @@
+//! Code search engine backed by tree-sitter queries and plain-text grep.
+//!
+//! The central type is [`SearchQuery`], produced by [`parse_query`] from
+//! a user-facing string. Queries are either:
+//!
+//! * **Shorthand prefixes** (`fn:`, `call:`, `var:`, …) that expand to
+//!   pre-written tree-sitter S-expression queries with an optional text
+//!   filter applied to the captured node.
+//! * **Raw tree-sitter S-expressions** (starting with `(` or `[`) forwarded
+//!   directly to the query engine.
+//! * **Plain-text grep** (anything else) — case-insensitive substring search.
+//!
+//! [`search_project`] runs searches in parallel across all files using Rayon
+//! and returns deduplicated, sorted [`SearchResult`]s.
+
 use std::collections::HashSet;
 use std::fs;
 
@@ -12,6 +27,19 @@ const QUERY_FN: &str = "
 (function_definition
   declarator: (function_declarator
     declarator: (identifier) @match))
+(function_definition
+  declarator: (pointer_declarator
+    declarator: (function_declarator
+      declarator: (identifier) @match)))
+(function_definition
+  declarator: (function_declarator
+    declarator: (qualified_identifier
+      name: (identifier) @match)))
+(function_definition
+  declarator: (pointer_declarator
+    declarator: (function_declarator
+      declarator: (qualified_identifier
+        name: (identifier) @match))))
 ";
 
 const QUERY_CALL: &str = "
@@ -22,6 +50,10 @@ const QUERY_CALL: &str = "
 const QUERY_VAR: &str = "
 (declaration declarator: (identifier) @match)
 (declaration declarator: (init_declarator declarator: (identifier) @match))
+(declaration declarator: (pointer_declarator declarator: (identifier) @match))
+(declaration declarator: (init_declarator declarator: (pointer_declarator declarator: (identifier) @match)))
+(declaration declarator: (reference_declarator (identifier) @match))
+(declaration declarator: (init_declarator declarator: (reference_declarator (identifier) @match)))
 ";
 
 const QUERY_CLASS: &str = "
@@ -71,6 +103,7 @@ pub fn parse_query(raw: &str) -> SearchQuery {
 
     // Raw tree-sitter query
     if trimmed.starts_with('(') || trimmed.starts_with('[') {
+        log::debug!("parse_query: raw ts-query ({} chars)", trimmed.len());
         return SearchQuery {
             raw: raw.to_string(),
             ts_query_src: trimmed.to_string(),
@@ -93,6 +126,10 @@ pub fn parse_query(raw: &str) -> SearchQuery {
     ];
     for (prefix, ts_query, filter_nested) in shorthands {
         if let Some(rest) = trimmed.strip_prefix(prefix) {
+            log::debug!(
+                "parse_query: shorthand {:?} filter={:?} nested_filter={}",
+                prefix, rest.trim(), filter_nested
+            );
             return SearchQuery {
                 raw: raw.to_string(),
                 ts_query_src: ts_query.to_string(),
@@ -104,6 +141,7 @@ pub fn parse_query(raw: &str) -> SearchQuery {
     }
 
     // Plain-text grep
+    log::debug!("parse_query: plain grep {:?}", raw);
     SearchQuery {
         raw: raw.to_string(),
         ts_query_src: String::new(),
@@ -152,10 +190,16 @@ pub fn search_project(files: &[String], query: &SearchQuery) -> Vec<SearchResult
     );
     let mut results: Vec<SearchResult> = files
         .par_iter()
-        .flat_map(|f| search_file(f, query))
+        .flat_map(|f| {
+            let hits = search_file(f, query);
+            if !hits.is_empty() {
+                log::debug!("search: {} hits in {}", hits.len(), f);
+            }
+            hits
+        })
         .collect();
     results.sort_by(|a, b| a.file_path.cmp(&b.file_path).then(a.line.cmp(&b.line)));
-    log::info!("search: {} results", results.len());
+    log::info!("search: {} total results across {} files", results.len(), files.len());
     results
 }
 
@@ -163,6 +207,8 @@ pub fn search_project(files: &[String], query: &SearchQuery) -> Vec<SearchResult
 
 pub fn search_file(file_path: &str, query: &SearchQuery) -> Vec<SearchResult> {
     let Ok(src) = fs::read_to_string(file_path) else {
+        // Per ripgrep lesson: log and continue rather than aborting the whole search.
+        log::warn!("cannot read {}: skipping", file_path);
         return vec![];
     };
     search_src(file_path, &src, query)
@@ -200,6 +246,11 @@ pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<Search
     let mut out = Vec::new();
 
     for (m, capture_idx) in cursor.captures(&ts_query, tree.root_node(), src.as_bytes()) {
+        if out.len() >= MAX_RESULTS_PER_FILE {
+            log::debug!("per-file cap ({}) reached in {}", MAX_RESULTS_PER_FILE, file_path);
+            break;
+        }
+
         let capture = m.captures[capture_idx];
         let node = capture.node;
         let byte_start = node.start_byte();
@@ -211,6 +262,12 @@ pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<Search
 
         // Skip calls nested inside the argument list of another call
         if query.filter_nested_calls && call_is_nested(node) {
+            log::trace!(
+                "nested call filtered: {:?} at {}:{}",
+                src.get(byte_start..node.end_byte()).unwrap_or("?"),
+                node.start_position().row + 1,
+                node.start_position().column
+            );
             continue;
         }
 
@@ -239,6 +296,13 @@ pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<Search
 
     out
 }
+
+/// Maximum results collected per file for any single search (ts-query or grep).
+///
+/// Learned from ripgrep: unbounded result accumulation in parallel workers can
+/// cause runaway memory use on pathological inputs. A per-file cap keeps both
+/// memory and result-list rendering bounded.
+const MAX_RESULTS_PER_FILE: usize = 500;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -295,7 +359,7 @@ fn grep(file_path: &str, src: &str, text: &str) -> Vec<SearchResult> {
                 capture_name: String::new(),
             })
         })
-        .take(500)
+        .take(MAX_RESULTS_PER_FILE)
         .collect()
 }
 
@@ -583,10 +647,18 @@ void bootstrap() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
+/// Extract a short display snippet from a source line.
+///
+/// Starts a few characters before `col` so the match is visible in context.
+/// Learned from ripgrep: always work in char indices rather than byte offsets
+/// when building display strings, and never slice a `&str` at a raw byte
+/// position that may land inside a multi-byte codepoint.
 fn make_snippet(line: &str, col: usize) -> String {
-    let start = col.saturating_sub(4);
+    // col is a byte offset from tree-sitter; convert to char count safely.
+    let col_char = line[..col.min(line.len())].chars().count();
+    let start_char = col_char.saturating_sub(4);
     line.chars()
-        .skip(start)
+        .skip(start_char)
         .take(48)
         .collect::<String>()
         .trim_end()

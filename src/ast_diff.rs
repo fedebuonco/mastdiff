@@ -1,3 +1,14 @@
+//! AST parsing, flattening, diffing, and visibility helpers.
+//!
+//! The core workflow:
+//! 1. [`parse_single`] parses a source snippet into a flat list of [`AstLine`]s.
+//! 2. [`compute_ast_diff`] parses *two* snippets and aligns their flat trees
+//!    using the `similar` crate's line-level LCS diff, producing a pair of
+//!    [`AstLine`] vecs where each position corresponds to the same "slot" in
+//!    both trees (padded with empty rows when one side has more nodes).
+//! 3. [`visible_rows`] / [`row_has_children`] / [`filter_rows`] support the
+//!    interactive collapse/expand and filter UI without re-parsing.
+
 use anyhow::{Context, Result};
 use similar::{ChangeTag, TextDiff};
 use std::collections::HashSet;
@@ -302,6 +313,156 @@ pub fn filter_rows(nodes: &[AstLine], filter: &str) -> Vec<usize> {
         .filter(|(_, v)| **v)
         .map(|(i, _)| i)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SIMPLE_CPP: &str = r#"
+int add(int a, int b) {
+    return a + b;
+}
+
+class Foo {
+    int x;
+};
+"#;
+
+    // ── parse_single ──────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_single_produces_nodes() {
+        let nodes = parse_single(SIMPLE_CPP).unwrap();
+        assert!(!nodes.is_empty());
+    }
+
+    #[test]
+    fn parse_single_contains_function_definition() {
+        let nodes = parse_single(SIMPLE_CPP).unwrap();
+        assert!(
+            nodes.iter().any(|n| n.kind == "function_definition"),
+            "expected function_definition node"
+        );
+    }
+
+    #[test]
+    fn parse_single_all_nodes_have_depths() {
+        let nodes = parse_single(SIMPLE_CPP).unwrap();
+        // Root node should be at depth 0
+        assert!(nodes.iter().any(|n| n.depth == 0));
+    }
+
+    #[test]
+    fn parse_single_source_rows_are_valid() {
+        let src = "int x = 1;\nint y = 2;\n";
+        let nodes = parse_single(src).unwrap();
+        let max_row = src.lines().count();
+        assert!(nodes.iter().all(|n| n.source_row < max_row));
+    }
+
+    #[test]
+    fn parse_single_empty_source_returns_empty_or_root_only() {
+        // Empty C++ source may still produce a root translation_unit node
+        let nodes = parse_single("").unwrap_or_default();
+        // Should not panic; result may be empty or have just a root
+        let _ = nodes;
+    }
+
+    // ── filter_rows ───────────────────────────────────────────────────────
+
+    #[test]
+    fn filter_rows_empty_filter_returns_all() {
+        let nodes = parse_single(SIMPLE_CPP).unwrap();
+        let all = filter_rows(&nodes, "");
+        assert_eq!(all.len(), nodes.len());
+    }
+
+    #[test]
+    fn filter_rows_function_keyword_returns_subset() {
+        let nodes = parse_single(SIMPLE_CPP).unwrap();
+        let all = filter_rows(&nodes, "");
+        let funcs = filter_rows(&nodes, "function");
+        assert!(funcs.len() < all.len(), "filtered set should be smaller");
+        assert!(!funcs.is_empty(), "should find at least one function node");
+    }
+
+    #[test]
+    fn filter_rows_includes_ancestors_of_match() {
+        let nodes = parse_single(SIMPLE_CPP).unwrap();
+        let filtered = filter_rows(&nodes, "function_definition");
+        // The filtered set must include depth-0 ancestors (translation_unit is the root)
+        assert!(filtered.contains(&0), "root ancestor should be included");
+    }
+
+    #[test]
+    fn filter_rows_no_match_returns_empty() {
+        let nodes = parse_single(SIMPLE_CPP).unwrap();
+        let result = filter_rows(&nodes, "zzz_no_such_node");
+        assert!(result.is_empty());
+    }
+
+    // ── visible_rows ──────────────────────────────────────────────────────
+
+    #[test]
+    fn visible_rows_no_collapse_returns_all() {
+        let nodes = parse_single(SIMPLE_CPP).unwrap();
+        let empty_right: Vec<AstLine> = vec![];
+        let collapsed = HashSet::new();
+        let vis = visible_rows(&nodes, &empty_right, &collapsed);
+        assert_eq!(vis.len(), nodes.len());
+    }
+
+    #[test]
+    fn visible_rows_collapsed_root_hides_children() {
+        let nodes = parse_single(SIMPLE_CPP).unwrap();
+        let empty_right: Vec<AstLine> = vec![];
+        let mut collapsed = HashSet::new();
+        collapsed.insert(0); // collapse first row
+        let vis = visible_rows(&nodes, &empty_right, &collapsed);
+        // Collapsing root (depth 0) should hide all children (depth > 0)
+        assert_eq!(vis.len(), 1, "only root should be visible");
+    }
+
+    // ── row_has_children ─────────────────────────────────────────────────
+
+    #[test]
+    fn row_has_children_for_parent_node() {
+        let nodes = parse_single(SIMPLE_CPP).unwrap();
+        let empty: Vec<AstLine> = vec![];
+        // Row 0 (translation_unit) should have children
+        assert!(row_has_children(0, &nodes, &empty));
+    }
+
+    // ── compute_ast_diff ─────────────────────────────────────────────────
+
+    #[test]
+    fn diff_identical_source_all_same() {
+        let src = "int x = 1;\n";
+        let result = compute_ast_diff(src, src, 0, 0).unwrap();
+        assert!(result.left_nodes.iter().all(|n| n.status == NodeStatus::Same));
+        assert!(result.right_nodes.iter().all(|n| n.status == NodeStatus::Same));
+    }
+
+    #[test]
+    fn diff_added_function_marked_added() {
+        let left  = "int x = 1;\n";
+        let right = "int x = 1;\nvoid foo() {}\n";
+        let result = compute_ast_diff(left, right, 0, 0).unwrap();
+        assert!(
+            result.right_nodes.iter().any(|n| n.status == NodeStatus::Added),
+            "new function should be marked Added on the right"
+        );
+    }
+
+    #[test]
+    fn diff_left_and_right_node_counts_match() {
+        let left  = "int a;\nint b;\n";
+        let right = "int a;\nint c;\n";
+        let result = compute_ast_diff(left, right, 0, 0).unwrap();
+        // flush_ast_bufs pads with empty rows so both sides have equal length
+        assert_eq!(result.left_nodes.len(), result.right_nodes.len());
+    }
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────

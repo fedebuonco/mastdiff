@@ -7,6 +7,7 @@ use crate::ast_diff::{
     compute_ast_diff, filter_rows, parse_single, row_has_children, visible_rows,
     AstDiffResult, AstLine,
 };
+use crate::config::Config;
 use crate::export;
 use crate::input::TextInput;
 use crate::project::TranslationUnit;
@@ -132,12 +133,18 @@ pub struct App {
     // ---- UI
     pub should_quit: bool,
     pub status_msg: String,
+
+    // ---- config
+    pub config: Config,
+    /// Set to Some(file, line, col) when the user presses Ctrl+o.
+    /// The main event loop drains this and opens the file in the configured editor.
+    pub pending_open: Option<(String, usize, usize)>,
 }
 
 impl App {
     // ── Constructors ──────────────────────────────────────────────────────
 
-    pub fn new_diff(left: String, right: String, left_path: String, right_path: String) -> Self {
+    pub fn new_diff(left: String, right: String, left_path: String, right_path: String, config: Config) -> Self {
         let left_lines: Vec<String> = left.lines().map(|l| l.to_string()).collect();
         let right_lines: Vec<String> = right.lines().map(|l| l.to_string()).collect();
         let diff_lines = compute_diff(&left, &right, false);
@@ -197,10 +204,12 @@ impl App {
             search_prev_mode: AppMode::TextDiff,
             should_quit: false,
             status_msg: Self::text_diff_hint(false),
+            config,
+            pending_open: None,
         }
     }
 
-    pub fn new_single(content: String, path: String) -> Self {
+    pub fn new_single(content: String, path: String, config: Config) -> Self {
         let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
         let ast = parse_single(&content).unwrap_or_default();
         let single_visible: Vec<usize> = (0..ast.len()).collect();
@@ -262,10 +271,12 @@ impl App {
             status_msg: String::from(
                 " q:quit  j/k:scroll  s/e:select  Enter:AST of selection  Space:fold  f:filter ",
             ),
+            config,
+            pending_open: None,
         }
     }
 
-    pub fn new_project(files: Vec<TranslationUnit>, dir_path: String) -> Self {
+    pub fn new_project(files: Vec<TranslationUnit>, dir_path: String, config: Config) -> Self {
         let n = files.len();
         let project_filtered: Vec<usize> = (0..n).collect();
         Self {
@@ -324,6 +335,8 @@ impl App {
             status_msg: String::from(
                 " j/k:navigate  Enter:open  s:filter  g:grep  f:ast search  q:quit",
             ),
+            config,
+            pending_open: None,
         }
     }
 
@@ -344,6 +357,7 @@ impl App {
     // ── Event dispatch ────────────────────────────────────────────────────
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        log::trace!("key {:?} mod={:?} in mode {:?}", key.code, key.modifiers, self.mode);
         match self.mode {
             AppMode::TextDiff => self.on_text_diff(key),
             AppMode::AstDiff => self.on_ast_diff(key),
@@ -487,6 +501,19 @@ impl App {
                 );
             }
 
+            // ── Open in external editor
+            KeyCode::Char('o') if key.modifiers == KeyModifiers::CONTROL => {
+                let diff_idx = self.display_to_diff(self.cursor);
+                if let Some(dl) = self.diff_lines.get(diff_idx) {
+                    let line = dl.left_lineno.unwrap_or(0);
+                    self.pending_open = Some((self.left_path.clone(), line, 0));
+                    self.status_msg = format!(
+                        " Opening {} +{} in {} ",
+                        self.left_path, line + 1, self.config.open_in.label()
+                    );
+                }
+            }
+
             // ── Export
             KeyCode::Char('x') => {
                 let path = "astdiff_output.patch";
@@ -610,8 +637,29 @@ impl App {
                 self.jump_ast_to_source();
             }
 
+            // ── Open in external editor
+            KeyCode::Char('o') if key.modifiers == KeyModifiers::CONTROL => {
+                if let (Some(ref result), Some(&raw)) =
+                    (&self.ast_result, self.ast_filter_rows.get(self.ast_cursor))
+                {
+                    let src_row = result
+                        .left_nodes
+                        .get(raw)
+                        .filter(|n| !n.empty)
+                        .map(|n| n.source_row)
+                        .unwrap_or(0);
+                    let abs_line = result.left_source_start + src_row;
+                    self.pending_open = Some((self.left_path.clone(), abs_line, 0));
+                    self.status_msg = format!(
+                        " Opening {} +{} in {} ",
+                        self.left_path, abs_line + 1, self.config.open_in.label()
+                    );
+                }
+            }
+
             // ── Back
             KeyCode::Esc | KeyCode::Char('b') => {
+                log::debug!("mode: AstDiff → TextDiff");
                 self.mode = AppMode::TextDiff;
                 self.ast_scroll = 0;
                 self.status_msg = Self::text_diff_hint(self.ignore_ws);
@@ -801,6 +849,15 @@ impl App {
                     format!(" AST filter: {} ", self.single_filter.label());
             }
 
+            // ── Open in external editor
+            KeyCode::Char('o') if key.modifiers == KeyModifiers::CONTROL => {
+                self.pending_open = Some((self.left_path.clone(), self.cursor, 0));
+                self.status_msg = format!(
+                    " Opening {} +{} in {} ",
+                    self.left_path, self.cursor + 1, self.config.open_in.label()
+                );
+            }
+
             _ => {}
         }
     }
@@ -887,6 +944,7 @@ impl App {
                 );
             }
             Err(e) => {
+                log::error!("AST parse failed: {}", e);
                 self.status_msg = format!(" AST parse error: {} ", e);
             }
         }
@@ -995,7 +1053,7 @@ impl App {
 
             // g: plain-text grep across all files
             KeyCode::Char('g') => {
-                log::info!("opening grep search from project browser");
+                log::info!("mode: ProjectBrowser → Search (grep)");
                 self.search_input.clear();
                 self.search_results.clear();
                 self.search_selected = 0;
@@ -1007,7 +1065,7 @@ impl App {
 
             // f: AST / tree-sitter structural search
             KeyCode::Char('f') => {
-                log::info!("opening AST search from project browser");
+                log::info!("mode: ProjectBrowser → Search (ast)");
                 self.search_input.clear();
                 self.search_results.clear();
                 self.search_selected = 0;
@@ -1019,17 +1077,30 @@ impl App {
                 );
             }
 
-            // Open selected file
+            // Open selected file in TUI
             KeyCode::Enter => {
                 if let Some(&idx) = self.project_filtered.get(self.project_cursor) {
                     let path = self.project_files[idx].file_path.clone();
                     if let Ok(content) = fs::read_to_string(&path) {
                         log::info!("opening file: {}", path);
-                        *self = App::new_single(content, path);
+                        let cfg = self.config.clone();
+                        *self = App::new_single(content, path, cfg);
                     } else {
                         log::warn!("cannot read file: {}", path);
                         self.status_msg = String::from(" Cannot read file. ");
                     }
+                }
+            }
+
+            // Open selected file in external editor
+            KeyCode::Char('o') if key.modifiers == KeyModifiers::CONTROL => {
+                if let Some(&idx) = self.project_filtered.get(self.project_cursor) {
+                    let path = self.project_files[idx].file_path.clone();
+                    self.pending_open = Some((path.clone(), 0, 0));
+                    self.status_msg = format!(
+                        " Opening {} in {} ",
+                        path, self.config.open_in.label()
+                    );
                 }
             }
 
@@ -1121,13 +1192,21 @@ impl App {
                 self.load_search_result(self.search_selected);
             }
 
-            // ── Open result in single-file mode
-            KeyCode::Char('o') | KeyCode::Char(' ') => {
-                self.open_search_result_as_single();
+            // ── Open result in external editor (Ctrl+o) — must come before the plain 'o' arm
+            KeyCode::Char('o') if key.modifiers == KeyModifiers::CONTROL => {
+                if let Some(result) = self.search_results.get(self.search_selected) {
+                    self.pending_open =
+                        Some((result.file_path.clone(), result.line, result.col));
+                    self.status_msg = format!(
+                        " Opening {}:{} in {} ",
+                        result.short_path(), result.line + 1, self.config.open_in.label()
+                    );
+                }
             }
 
             // ── Back
             KeyCode::Esc => {
+                log::debug!("mode: Search → {:?}", self.search_prev_mode);
                 self.mode = self.search_prev_mode.clone();
                 self.status_msg = String::from(" j/k:navigate  Enter:open  s:search  q:quit ");
             }
@@ -1170,8 +1249,10 @@ impl App {
         self.search_scroll = 0;
 
         if !self.search_results.is_empty() {
+            log::debug!("search results: loading first result");
             self.load_search_result(0);
         } else {
+            log::info!("search: no results for {:?}", raw);
             self.search_source_lines = vec![];
             self.search_source_scroll = 0;
             self.search_source_highlight = 0;
@@ -1181,8 +1262,8 @@ impl App {
         }
 
         self.status_msg = format!(
-            " {} results for {:?}  ↑↓:navigate  o:open  Esc:back ",
-            n, raw
+            " {} results for {:?}  ↑↓:navigate  Ctrl+o:open in {}  Esc:back ",
+            n, raw, self.config.open_in.label()
         );
     }
 
@@ -1228,17 +1309,4 @@ impl App {
         self.search_ast_scroll = highlight.saturating_sub(5);
     }
 
-    fn open_search_result_as_single(&mut self) {
-        let Some(result) = self.search_results.get(self.search_selected).cloned() else {
-            return;
-        };
-        if let Ok(content) = fs::read_to_string(&result.file_path) {
-            let path = result.file_path.clone();
-            let target_line = result.line;
-            *self = App::new_single(content, path);
-            // Pre-scroll to the match line
-            self.cursor = target_line;
-            self.scroll = target_line.saturating_sub(5);
-        }
-    }
 }
