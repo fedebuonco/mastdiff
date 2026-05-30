@@ -14,8 +14,8 @@ fn sample_dir() -> std::path::PathBuf {
 
 fn load_files() -> Vec<String> {
     let dir = sample_dir();
-    let tus = project::load(&dir).expect("failed to load sample project");
-    tus.into_iter().map(|tu| tu.file_path).collect()
+    let data = project::load(&dir).expect("failed to load sample project");
+    data.files.into_iter().map(|tu| tu.file_path).collect()
 }
 
 fn short(r: &SearchResult) -> &str {
@@ -32,8 +32,12 @@ fn files_in_results<'a>(results: &'a [SearchResult]) -> Vec<&'a str> {
 
 #[test]
 fn project_loads_five_translation_units() {
-    let files = load_files();
-    assert_eq!(files.len(), 5, "expected 5 TUs, got {:?}", files);
+    let dir = sample_dir();
+    let data = project::load(&dir).expect("failed to load sample project");
+    let sources: Vec<_> = data.files.iter().filter(|tu| !tu.is_header).collect();
+    let headers: Vec<_> = data.files.iter().filter(|tu| tu.is_header).collect();
+    assert_eq!(sources.len(), 5, "expected 5 source TUs, got {:?}", sources.iter().map(|t| &t.file_path).collect::<Vec<_>>());
+    assert_eq!(headers.len(), 4, "expected 4 headers, got {:?}", headers.iter().map(|t| &t.file_path).collect::<Vec<_>>());
 }
 
 #[test]
@@ -59,8 +63,8 @@ fn project_files_are_cpp_sources() {
 #[test]
 fn project_files_have_nonzero_size() {
     let dir = sample_dir();
-    let tus = project::load(&dir).unwrap();
-    for tu in &tus {
+    let data = project::load(&dir).unwrap();
+    for tu in &data.files {
         assert!(tu.file_size > 0, "zero-size file: {}", tu.file_path);
     }
 }

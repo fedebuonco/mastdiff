@@ -49,13 +49,14 @@ fn main() -> Result<()> {
 
     let app = if left_path.is_dir() {
         // Project browser mode
-        let files = project::load(left_path)?;
-        if files.is_empty() {
+        let data = project::load(left_path)?;
+        if data.files.is_empty() {
             eprintln!("No C++ source files found in {:?}", left_path);
             std::process::exit(1);
         }
-        log::info!("project mode: {} translation units in {:?}", files.len(), left_path);
-        App::new_project(files, cli.left.clone(), cfg.clone())
+        log::info!("project mode: {} files, {} cmake targets in {:?}",
+            data.files.len(), data.cmake_targets.len(), left_path);
+        App::new_project(data, cli.left.clone(), cfg.clone())
     } else if let Some(ref right_path) = cli.right {
         // Two-file diff mode
         let left = fs::read_to_string(&cli.left)?;

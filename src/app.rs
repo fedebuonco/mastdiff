@@ -11,7 +11,7 @@ use crate::ast_diff::{
 use crate::config::Config;
 use crate::export;
 use crate::input::TextInput;
-use crate::project::TranslationUnit;
+use crate::project::{CmakeTarget, TranslationUnit};
 use crate::search::{parse_query, search_project, FileFilter, SearchQuery, SearchResult};
 use crate::syntax::SyntaxSpan;
 use crate::text_diff::{compute_diff, context_view, hunk_positions, DiffLine};
@@ -30,6 +30,34 @@ pub enum AppMode {
     ProjectBrowser,
     Search,
     Help,
+}
+
+/// Which view the project browser is showing.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProjectView {
+    /// Source files with expandable associated headers (default).
+    Tus,
+    /// Flat list of source files only (.cpp/.cc/.cxx/.C).
+    Sources,
+    /// Flat list of header files only (.h/.hpp/.hxx/.H).
+    Headers,
+    /// CMake targets parsed from CMakeLists.txt.
+    Cmake,
+}
+
+/// One row in the project browser display list.
+#[derive(Clone, Debug)]
+pub enum ProjectRow {
+    /// A source file (index into `project_files`).
+    Source(usize),
+    /// A header file associated with a source (TU view, expanded).
+    Header { #[allow(dead_code)] parent_idx: usize, path: String, size: u64 },
+    /// A loose header file not associated with any source (Headers view).
+    LooseHeader(usize),
+    /// A CMake target (index into `cmake_targets`).
+    CmakeTarget(usize),
+    /// A source listed under a CMake target (Cmake view, expanded).
+    CmakeSource { #[allow(dead_code)] tgt_idx: usize, path: String },
 }
 
 /// Which input box has keyboard focus in Search mode.
@@ -125,8 +153,11 @@ pub struct App {
 
     // ---- project browser
     pub project_files: Vec<TranslationUnit>,
-    pub project_filtered: Vec<usize>, // indices into project_files
-    pub project_cursor: usize,
+    pub cmake_targets: Vec<CmakeTarget>,
+    pub project_view: ProjectView,
+    pub project_display: Vec<ProjectRow>,  // flat display list for current view+filter
+    pub project_expanded: HashSet<usize>,  // source/cmake indices that are expanded
+    pub project_cursor: usize,             // index into project_display
     pub project_filter: TextInput,
     pub project_filter_active: bool,
 
@@ -212,7 +243,10 @@ impl App {
             single_filter: AstFilter::All,
             single_filter_rows: vec![],
             project_files: vec![],
-            project_filtered: vec![],
+            cmake_targets: vec![],
+            project_view: ProjectView::Tus,
+            project_display: vec![],
+            project_expanded: HashSet::new(),
             project_cursor: 0,
             project_filter: TextInput::new(),
             project_filter_active: false,
@@ -285,7 +319,10 @@ impl App {
             single_filter: AstFilter::All,
             single_filter_rows,
             project_files: vec![],
-            project_filtered: vec![],
+            cmake_targets: vec![],
+            project_view: ProjectView::Tus,
+            project_display: vec![],
+            project_expanded: HashSet::new(),
             project_cursor: 0,
             project_filter: TextInput::new(),
             project_filter_active: false,
@@ -319,9 +356,18 @@ impl App {
         }
     }
 
-    pub fn new_project(files: Vec<TranslationUnit>, dir_path: String, config: Config) -> Self {
-        let n = files.len();
-        let project_filtered: Vec<usize> = (0..n).collect();
+    pub fn new_project(data: crate::project::ProjectData, dir_path: String, config: Config) -> Self {
+        let files = data.files;
+        let cmake_targets = data.cmake_targets;
+
+        // Build initial display list (TU view, no filter, all collapsed).
+        let project_display: Vec<ProjectRow> = files
+            .iter()
+            .enumerate()
+            .filter(|(_, tu)| !tu.is_header)
+            .map(|(i, _)| ProjectRow::Source(i))
+            .collect();
+
         Self {
             left_path: dir_path.clone(),
             right_path: dir_path,
@@ -357,7 +403,10 @@ impl App {
             single_filter: AstFilter::All,
             single_filter_rows: vec![],
             project_files: files,
-            project_filtered,
+            cmake_targets,
+            project_view: ProjectView::Tus,
+            project_display,
+            project_expanded: HashSet::new(),
             project_cursor: 0,
             project_filter: TextInput::new(),
             project_filter_active: false,
@@ -1131,7 +1180,7 @@ impl App {
     // ── Project browser mode ──────────────────────────────────────────────
 
     fn on_project_browser(&mut self, key: KeyEvent) {
-        let n = self.project_filtered.len();
+        let n = self.project_display.len();
 
         // When the filter bar is active, most keys go to the text input.
         if self.project_filter_active {
@@ -1139,25 +1188,27 @@ impl App {
                 KeyCode::Esc => {
                     self.project_filter_active = false;
                     self.project_filter.clear();
-                    self.rebuild_project_filter();
-                    self.status_msg = String::from(" j/k:navigate  Enter:open  s:filter  g:grep  f:ast search  q:quit");
+                    self.rebuild_project_display();
+                    self.status_msg = String::from(
+                        " j/k:navigate  Space:expand  Enter:open  1-4:views  s:filter  g:grep  f:ast  q:quit",
+                    );
                 }
                 KeyCode::Enter => {
                     self.project_filter_active = false;
                     self.status_msg = format!(
-                        " Filter: {:?} — j/k:navigate  Enter:open  s:edit filter  f:find in code ",
+                        " Filter: {:?}  1-4:views  s:edit  Esc:clear ",
                         self.project_filter.as_str()
                     );
                 }
                 KeyCode::Backspace => {
                     self.project_filter.backspace();
-                    self.rebuild_project_filter();
+                    self.rebuild_project_display();
                 }
                 KeyCode::Left  => self.project_filter.move_left(),
                 KeyCode::Right => self.project_filter.move_right(),
                 KeyCode::Char(c) => {
                     self.project_filter.push(c);
-                    self.rebuild_project_filter();
+                    self.rebuild_project_display();
                     self.project_cursor = 0;
                 }
                 _ => {}
@@ -1167,28 +1218,52 @@ impl App {
 
         // Normal command mode
         match key.code {
+            // ── Navigation ────────────────────────────────────────────────
             KeyCode::Up | KeyCode::Char('k') => {
-                if self.project_cursor > 0 {
-                    self.project_cursor -= 1;
-                }
+                if self.project_cursor > 0 { self.project_cursor -= 1; }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.project_cursor + 1 < n {
-                    self.project_cursor += 1;
-                }
+                if self.project_cursor + 1 < n { self.project_cursor += 1; }
             }
-            KeyCode::PageUp => self.project_cursor = self.project_cursor.saturating_sub(20),
+            KeyCode::PageUp   => self.project_cursor = self.project_cursor.saturating_sub(20),
             KeyCode::PageDown => self.project_cursor = (self.project_cursor + 20).min(n.saturating_sub(1)),
-            KeyCode::Home => self.project_cursor = 0,
+            KeyCode::Home     => self.project_cursor = 0,
             KeyCode::End | KeyCode::Char('G') => self.project_cursor = n.saturating_sub(1),
 
-            // s: filter file list by name
-            KeyCode::Char('s') => {
-                self.project_filter_active = true;
-                self.status_msg = String::from(" s:filter files  Type to narrow  Enter:confirm  Esc:clear ");
+            // ── Expand/collapse (Space) ───────────────────────────────────
+            KeyCode::Char(' ') => {
+                self.project_toggle_expand();
             }
 
-            // g: plain-text grep across all files
+            // ── View switching (1-4 / Tab) ────────────────────────────────
+            KeyCode::Char('1') => self.set_project_view(ProjectView::Tus),
+            KeyCode::Char('2') => self.set_project_view(ProjectView::Sources),
+            KeyCode::Char('3') => self.set_project_view(ProjectView::Headers),
+            KeyCode::Char('4') => {
+                if !self.cmake_targets.is_empty() {
+                    self.set_project_view(ProjectView::Cmake);
+                }
+            }
+            KeyCode::Tab => {
+                let next = match self.project_view {
+                    ProjectView::Tus     => ProjectView::Sources,
+                    ProjectView::Sources => ProjectView::Headers,
+                    ProjectView::Headers => {
+                        if !self.cmake_targets.is_empty() { ProjectView::Cmake }
+                        else { ProjectView::Tus }
+                    }
+                    ProjectView::Cmake   => ProjectView::Tus,
+                };
+                self.set_project_view(next);
+            }
+
+            // ── Filter (s) ────────────────────────────────────────────────
+            KeyCode::Char('s') => {
+                self.project_filter_active = true;
+                self.status_msg = String::from(" Type to filter  Enter:confirm  Esc:clear ");
+            }
+
+            // ── Search (g=grep, f=AST) ────────────────────────────────────
             KeyCode::Char('g') => {
                 log::info!("mode: ProjectBrowser → Search (grep)");
                 self.search_input.clear();
@@ -1199,8 +1274,6 @@ impl App {
                 self.mode = AppMode::Search;
                 self.status_msg = String::from(" GREP  type text  Enter:search  Esc:back ");
             }
-
-            // f: AST / tree-sitter structural search
             KeyCode::Char('f') => {
                 log::info!("mode: ProjectBrowser → Search (ast)");
                 self.search_input.clear();
@@ -1214,10 +1287,9 @@ impl App {
                 );
             }
 
-            // Open selected file in TUI
+            // ── Open in TUI (Enter) ───────────────────────────────────────
             KeyCode::Enter => {
-                if let Some(&idx) = self.project_filtered.get(self.project_cursor) {
-                    let path = self.project_files[idx].file_path.clone();
+                if let Some(path) = self.selected_project_path() {
                     if let Ok(content) = fs::read_to_string(&path) {
                         log::info!("opening file: {}", path);
                         let cfg = self.config.clone();
@@ -1229,40 +1301,138 @@ impl App {
                 }
             }
 
-            // Open selected file in external editor
+            // ── Open in external editor (Ctrl+o) ──────────────────────────
             KeyCode::Char('o') if key.modifiers == KeyModifiers::CONTROL => {
-                if let Some(&idx) = self.project_filtered.get(self.project_cursor) {
-                    let path = self.project_files[idx].file_path.clone();
+                if let Some(path) = self.selected_project_path() {
                     self.pending_open = Some((path.clone(), 0, 0));
-                    self.status_msg = format!(
-                        " Opening {} in {} ",
-                        path, self.config.open_in.label()
-                    );
+                    self.status_msg = format!(" Opening {} in {} ", path, self.config.open_in.label());
                 }
             }
 
             KeyCode::Esc => {
                 self.project_filter.clear();
                 self.project_filter_active = false;
-                self.rebuild_project_filter();
+                self.rebuild_project_display();
             }
 
             _ => {}
         }
     }
 
-    fn rebuild_project_filter(&mut self) {
+    // ── Project display helpers ───────────────────────────────────────────
+
+    fn set_project_view(&mut self, view: ProjectView) {
+        self.project_view = view;
+        self.project_cursor = 0;
+        self.rebuild_project_display();
+        let hint = match self.project_view {
+            ProjectView::Tus     => " 1:TUs  2:Sources  3:Headers  4:CMake  Space:expand  s:filter  g:grep  f:ast",
+            ProjectView::Sources => " 1:TUs  2:Sources  3:Headers  4:CMake  s:filter  g:grep  f:ast",
+            ProjectView::Headers => " 1:TUs  2:Sources  3:Headers  4:CMake  s:filter  g:grep  f:ast",
+            ProjectView::Cmake   => " 1:TUs  2:Sources  3:Headers  4:CMake  Space:expand  s:filter",
+        };
+        self.status_msg = hint.to_string();
+    }
+
+    fn project_toggle_expand(&mut self) {
+        let Some(row) = self.project_display.get(self.project_cursor).cloned() else { return };
+        match row {
+            ProjectRow::Source(idx) => {
+                if self.project_files[idx].associated_headers.is_empty() { return; }
+                if self.project_expanded.contains(&idx) {
+                    self.project_expanded.remove(&idx);
+                } else {
+                    self.project_expanded.insert(idx);
+                }
+                self.rebuild_project_display();
+            }
+            ProjectRow::CmakeTarget(idx) => {
+                if self.cmake_targets[idx].sources.is_empty() { return; }
+                if self.project_expanded.contains(&idx) {
+                    self.project_expanded.remove(&idx);
+                } else {
+                    self.project_expanded.insert(idx);
+                }
+                self.rebuild_project_display();
+            }
+            _ => {}
+        }
+    }
+
+    fn selected_project_path(&self) -> Option<String> {
+        match self.project_display.get(self.project_cursor)? {
+            ProjectRow::Source(idx)          => Some(self.project_files[*idx].file_path.clone()),
+            ProjectRow::LooseHeader(idx)     => Some(self.project_files[*idx].file_path.clone()),
+            ProjectRow::Header { path, .. }  => Some(path.clone()),
+            ProjectRow::CmakeSource { path, .. } => Some(path.clone()),
+            ProjectRow::CmakeTarget(_)       => None, // targets aren't files
+        }
+    }
+
+    pub fn rebuild_project_display(&mut self) {
         let filter = self.project_filter.as_str().to_lowercase();
-        self.project_filtered = (0..self.project_files.len())
-            .filter(|&i| {
-                filter.is_empty()
-                    || self.project_files[i]
-                        .file_path
-                        .to_lowercase()
-                        .contains(&filter)
-            })
-            .collect();
-        self.project_cursor = self.project_cursor.min(self.project_filtered.len().saturating_sub(1));
+        let mut rows: Vec<ProjectRow> = Vec::new();
+
+        match self.project_view {
+            ProjectView::Tus => {
+                for (idx, tu) in self.project_files.iter().enumerate() {
+                    if tu.is_header { continue; }
+                    if !filter.is_empty() && !tu.file_path.to_lowercase().contains(&filter) {
+                        continue;
+                    }
+                    rows.push(ProjectRow::Source(idx));
+                    if self.project_expanded.contains(&idx) {
+                        for hpath in &tu.associated_headers {
+                            let size = fs::metadata(hpath).map(|m| m.len()).unwrap_or(0);
+                            rows.push(ProjectRow::Header {
+                                parent_idx: idx,
+                                path: hpath.clone(),
+                                size,
+                            });
+                        }
+                    }
+                }
+            }
+            ProjectView::Sources => {
+                for (idx, tu) in self.project_files.iter().enumerate() {
+                    if tu.is_header { continue; }
+                    if !filter.is_empty() && !tu.file_path.to_lowercase().contains(&filter) {
+                        continue;
+                    }
+                    rows.push(ProjectRow::Source(idx));
+                }
+            }
+            ProjectView::Headers => {
+                for (idx, tu) in self.project_files.iter().enumerate() {
+                    if !tu.is_header { continue; }
+                    if !filter.is_empty() && !tu.file_path.to_lowercase().contains(&filter) {
+                        continue;
+                    }
+                    rows.push(ProjectRow::LooseHeader(idx));
+                }
+            }
+            ProjectView::Cmake => {
+                for (idx, tgt) in self.cmake_targets.iter().enumerate() {
+                    if !filter.is_empty() && !tgt.name.to_lowercase().contains(&filter) {
+                        continue;
+                    }
+                    rows.push(ProjectRow::CmakeTarget(idx));
+                    if self.project_expanded.contains(&idx) {
+                        for src in &tgt.sources {
+                            rows.push(ProjectRow::CmakeSource {
+                                tgt_idx: idx,
+                                path: src.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        self.project_display = rows;
+        self.project_cursor = self.project_cursor.min(
+            self.project_display.len().saturating_sub(1)
+        );
     }
 
     // ── Search mode ───────────────────────────────────────────────────────
