@@ -11,12 +11,12 @@ use crate::ast_diff::AstLine;
 use crate::syntax::SyntaxSpan;
 
 pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
-    // Vertical stack: query bar (3) + filter bar (3) + body (rest)
+    // Vertical stack: query bar (3) + filter bar (6 = include+exclude) + body (rest)
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(3),
+            Constraint::Length(6),
             Constraint::Min(1),
         ])
         .split(area);
@@ -71,10 +71,10 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
 // ── Filter bar (include / exclude) ───────────────────────────────────────
 
 fn render_filter_bar(f: &mut Frame, app: &App, area: Rect) {
-    // Split horizontally: include on left, exclude on right (equal halves)
-    let halves = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+    // Stack include on top, exclude below
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Length(3)])
         .split(area);
 
     render_filter_box(
@@ -85,7 +85,7 @@ fn render_filter_bar(f: &mut Frame, app: &App, area: Rect) {
         app.search_include.cursor_col(),
         app.search_focus == SearchFocus::Include,
         Color::Rgb(80, 180, 80),
-        halves[0],
+        rows[0],
     );
     render_filter_box(
         f,
@@ -95,7 +95,7 @@ fn render_filter_bar(f: &mut Frame, app: &App, area: Rect) {
         app.search_exclude.cursor_col(),
         app.search_focus == SearchFocus::Exclude,
         Color::Rgb(200, 80, 80),
-        halves[1],
+        rows[1],
     );
 }
 
