@@ -84,32 +84,42 @@ pub fn load(dir: &Path) -> Result<ProjectData> {
         tus
     };
 
-    // Build a set of header paths for fast lookup.
-    let header_paths: HashMap<String, u64> = files
-        .iter()
-        .filter(|tu| tu.is_header)
-        .map(|tu| (tu.file_path.clone(), tu.file_size))
-        .collect();
+    // Build a stem → Vec<header_path> map so we can match headers that live
+    // in a different directory (e.g. include/ vs src/).
+    let mut stem_to_headers: HashMap<String, Vec<String>> = HashMap::new();
+    for tu in files.iter().filter(|tu| tu.is_header) {
+        let stem = Path::new(&tu.file_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        stem_to_headers.entry(stem).or_default().push(tu.file_path.clone());
+    }
 
-    // Associate headers with their source siblings.
+    // Associate headers with each source file by matching stem.
+    // Same-directory matches are listed first, then others, deduplicated.
     for tu in &mut files {
         if tu.is_header { continue; }
         let stem = Path::new(&tu.file_path)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("")
-            .to_string();
-        let dir_part = Path::new(&tu.file_path)
+            .to_lowercase();
+        let src_dir = Path::new(&tu.file_path)
             .parent()
             .and_then(|p| p.to_str())
-            .unwrap_or("")
-            .to_string();
+            .unwrap_or("");
 
-        for ext in &["h", "hpp", "hxx", "H"] {
-            let candidate = format!("{}/{}.{}", dir_part, stem, ext);
-            if header_paths.contains_key(&candidate) {
-                tu.associated_headers.push(candidate);
-            }
+        if let Some(candidates) = stem_to_headers.get(&stem) {
+            // Same-dir first, then cross-dir
+            let mut same: Vec<&String> = candidates.iter()
+                .filter(|h| Path::new(h).parent().and_then(|p| p.to_str()) == Some(src_dir))
+                .collect();
+            let mut other: Vec<&String> = candidates.iter()
+                .filter(|h| Path::new(h).parent().and_then(|p| p.to_str()) != Some(src_dir))
+                .collect();
+            same.append(&mut other);
+            tu.associated_headers = same.into_iter().cloned().collect();
         }
     }
 
