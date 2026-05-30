@@ -2,7 +2,7 @@
 //!
 //! [`load`] prefers a `compile_commands.json` database (checked in several
 //! common build-output directories) and falls back to a recursive directory
-//! walk collecting `.cpp`, `.cc`, `.cxx`, and `.C` files.
+//! walk collecting `.cpp`, `.cc`, `.cxx`, `.C`, `.h`, `.hpp`, `.hxx`, and `.H` files.
 //!
 //! The resulting [`TranslationUnit`] slice is always sorted by path and
 //! deduplicated, so callers can rely on a stable, canonical ordering.
@@ -122,7 +122,7 @@ pub fn is_cpp_source(path: &str) -> bool {
         Path::new(path)
             .extension()
             .and_then(|e| e.to_str()),
-        Some("cpp" | "cc" | "cxx" | "C")
+        Some("cpp" | "cc" | "cxx" | "C" | "h" | "hpp" | "hxx" | "H")
     )
 }
 
@@ -138,12 +138,15 @@ mod tests {
         assert!(is_cpp_source("foo.cc"));
         assert!(is_cpp_source("foo.cxx"));
         assert!(is_cpp_source("foo.C"));
+        assert!(is_cpp_source("foo.h"));
+        assert!(is_cpp_source("foo.hpp"));
+        assert!(is_cpp_source("foo.hxx"));
+        assert!(is_cpp_source("foo.H"));
     }
 
     #[test]
     fn non_cpp_extensions_rejected() {
         assert!(!is_cpp_source("foo.c"));
-        assert!(!is_cpp_source("foo.h"));
         assert!(!is_cpp_source("foo.rs"));
         assert!(!is_cpp_source("foo.py"));
         assert!(!is_cpp_source("foo"));
