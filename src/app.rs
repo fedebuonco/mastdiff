@@ -13,6 +13,7 @@ use crate::export;
 use crate::input::TextInput;
 use crate::project::TranslationUnit;
 use crate::search::{parse_query, search_project, SearchQuery, SearchResult};
+use crate::syntax::SyntaxSpan;
 use crate::text_diff::{compute_diff, context_view, hunk_positions, DiffLine};
 
 /// Display rows consumed by each search result in the results list.
@@ -28,6 +29,7 @@ pub enum AppMode {
     SingleFile,
     ProjectBrowser,
     Search,
+    Help,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -128,12 +130,16 @@ pub struct App {
     pub search_selected: usize,
     pub search_scroll: usize,         // top of the results list
     pub search_source_lines: Vec<String>,
+    pub search_source_tokens: Vec<Vec<SyntaxSpan>>, // syntax-highlight spans, indexed by line
     pub search_source_scroll: usize,
     pub search_source_highlight: usize, // line to highlight (abs line in file)
     pub search_ast_nodes: Vec<AstLine>,
     pub search_ast_scroll: usize,
     pub search_ast_highlight: usize,  // index in search_ast_nodes to highlight
     pub search_prev_mode: AppMode,    // mode to return to on Esc
+
+    // ---- help overlay
+    pub help_prev_mode: AppMode,      // mode to return to when closing help
 
     // ---- UI
     pub should_quit: bool,
@@ -206,12 +212,14 @@ impl App {
             search_selected: 0,
             search_scroll: 0,
             search_source_lines: vec![],
+            search_source_tokens: vec![],
             search_source_scroll: 0,
             search_source_highlight: 0,
             search_ast_nodes: vec![],
             search_ast_scroll: 0,
             search_ast_highlight: 0,
             search_prev_mode: AppMode::TextDiff,
+            help_prev_mode: AppMode::TextDiff,
             should_quit: false,
             status_msg: Self::text_diff_hint(false),
             config,
@@ -274,12 +282,14 @@ impl App {
             search_selected: 0,
             search_scroll: 0,
             search_source_lines: vec![],
+            search_source_tokens: vec![],
             search_source_scroll: 0,
             search_source_highlight: 0,
             search_ast_nodes: vec![],
             search_ast_scroll: 0,
             search_ast_highlight: 0,
             search_prev_mode: AppMode::SingleFile,
+            help_prev_mode: AppMode::SingleFile,
             should_quit: false,
             status_msg: String::from(
                 " q:quit  j/k:scroll  s/e:select  Enter:AST of selection  Space:fold  f:filter ",
@@ -341,12 +351,14 @@ impl App {
             search_selected: 0,
             search_scroll: 0,
             search_source_lines: vec![],
+            search_source_tokens: vec![],
             search_source_scroll: 0,
             search_source_highlight: 0,
             search_ast_nodes: vec![],
             search_ast_scroll: 0,
             search_ast_highlight: 0,
             search_prev_mode: AppMode::ProjectBrowser,
+            help_prev_mode: AppMode::ProjectBrowser,
             should_quit: false,
             status_msg: String::from(
                 " j/k:navigate  Enter:open  s:filter  g:grep  f:ast search  q:quit",
@@ -377,12 +389,34 @@ impl App {
 
     pub fn handle_key(&mut self, key: KeyEvent) {
         log::trace!("key {:?} mod={:?} in mode {:?}", key.code, key.modifiers, self.mode);
+
+        // Global: '?' opens help from any mode (except when typing in a search box)
+        if key.code == KeyCode::Char('?')
+            && key.modifiers == KeyModifiers::NONE
+            && self.mode != AppMode::Search
+            && self.mode != AppMode::Help
+        {
+            self.help_prev_mode = self.mode.clone();
+            self.mode = AppMode::Help;
+            return;
+        }
+
         match self.mode {
             AppMode::TextDiff => self.on_text_diff(key),
             AppMode::AstDiff => self.on_ast_diff(key),
             AppMode::SingleFile => self.on_single_file(key),
             AppMode::ProjectBrowser => self.on_project_browser(key),
             AppMode::Search => self.on_search(key),
+            AppMode::Help => self.on_help(key),
+        }
+    }
+
+    fn on_help(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+                self.mode = self.help_prev_mode.clone();
+            }
+            _ => {}
         }
     }
 
@@ -1008,7 +1042,11 @@ impl App {
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
         match self.mode {
             AppMode::Search => self.on_search_mouse(mouse),
-            _ => {}
+            AppMode::Help
+            | AppMode::TextDiff
+            | AppMode::AstDiff
+            | AppMode::SingleFile
+            | AppMode::ProjectBrowser => {}
         }
     }
 
@@ -1362,11 +1400,12 @@ impl App {
             self.search_scroll
         };
 
-        // Load source lines
+        // Load source lines + syntax highlighting
         let Ok(content) = fs::read_to_string(&result.file_path) else {
             return;
         };
         self.search_source_lines = content.lines().map(|l| l.to_string()).collect();
+        self.search_source_tokens = crate::syntax::highlight(&content);
         self.search_source_highlight = result.line;
         self.search_source_scroll = result.line.saturating_sub(5);
 

@@ -8,6 +8,7 @@ use ratatui::{
 
 use crate::app::{App, ROWS_PER_RESULT};
 use crate::ast_diff::AstLine;
+use crate::syntax::SyntaxSpan;
 
 pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
     // Vertical split: input bar on top, body below
@@ -246,12 +247,12 @@ fn render_source_pane(f: &mut Frame, app: &App, area: Rect) {
         .map(|row| {
             let is_highlight = row == app.search_source_highlight;
             let lno = format!("{:4} ", row + 1);
-            let text = trunc(
-                app.search_source_lines.get(row).map(|s| s.as_str()).unwrap_or(""),
-                width.saturating_sub(6),
-            );
+            let raw_text = app.search_source_lines.get(row).map(|s| s.as_str()).unwrap_or("");
+            let max_text_width = width.saturating_sub(7); // 5 for lno, 2 for prefix "▶ "/"  "
 
             if is_highlight {
+                // Highlighted row: gutter + arrow + highlighted plain text (no syntax colour)
+                let text = trunc(raw_text, max_text_width);
                 Line::from(vec![
                     Span::styled(lno, Style::default().fg(Color::Rgb(220, 200, 80)).add_modifier(Modifier::BOLD)),
                     Span::styled(
@@ -263,10 +264,14 @@ fn render_source_pane(f: &mut Frame, app: &App, area: Rect) {
                     ),
                 ])
             } else {
-                Line::from(vec![
-                    Span::styled(lno, Style::default().fg(Color::Rgb(70, 70, 90))),
-                    Span::styled(format!("  {}", text), Style::default()),
-                ])
+                // Normal row: gutter + syntax-coloured spans
+                let empty_tokens: Vec<SyntaxSpan> = vec![];
+                let tokens = app.search_source_tokens.get(row).unwrap_or(&empty_tokens);
+                let gutter = Span::styled(lno, Style::default().fg(Color::Rgb(70, 70, 90)));
+                let prefix  = Span::raw("  ");
+                let mut spans = vec![gutter, prefix];
+                spans.extend(syntax_spans(raw_text, tokens, max_text_width));
+                Line::from(spans)
             }
         })
         .collect();
@@ -327,6 +332,73 @@ fn render_ast_node(node: &AstLine, is_highlight: bool, width: usize) -> Line<'st
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+/// Convert a line's `SyntaxSpan` list into ratatui `Span`s, truncating to `max` chars.
+/// Gaps between spans are filled with the default terminal colour.
+fn syntax_spans<'a>(text: &str, tokens: &[SyntaxSpan], max: usize) -> Vec<Span<'a>> {
+    if tokens.is_empty() {
+        // No highlight info — plain truncated text.
+        return vec![Span::raw(trunc(text, max))];
+    }
+
+    let chars: Vec<char> = text.chars().take(max).collect();
+    let visible_len = chars.len();
+    if visible_len == 0 {
+        return vec![];
+    }
+
+    // Sort spans by start position (they should already be ordered).
+    let mut sorted: Vec<&SyntaxSpan> = tokens
+        .iter()
+        .filter(|s| s.start < visible_len)
+        .collect();
+    sorted.sort_by_key(|s| s.start);
+
+    let mut spans: Vec<Span<'a>> = Vec::new();
+    let mut cursor = 0usize;
+
+    let char_to_str = |range: std::ops::Range<usize>| -> String {
+        chars[range].iter().collect()
+    };
+
+    for tok in &sorted {
+        let start = tok.start.min(visible_len);
+        let end   = tok.end.min(visible_len);
+        if start >= end { continue; }
+
+        // Gap before this token — default colour
+        if cursor < start {
+            spans.push(Span::raw(char_to_str(cursor..start)));
+        }
+        spans.push(Span::styled(
+            char_to_str(start..end),
+            Style::default().fg(tok.color),
+        ));
+        cursor = end;
+    }
+
+    // Trailing default-colour text
+    if cursor < visible_len {
+        spans.push(Span::raw(char_to_str(cursor..visible_len)));
+    }
+
+    // If the line was truncated, append ellipsis on the last span
+    if text.chars().count() > max && max > 0 {
+        if let Some(last) = spans.last_mut() {
+            let s = last.content.to_mut();
+            if !s.is_empty() {
+                s.pop();
+                s.push('…');
+            } else {
+                *last = Span::raw("…".to_string());
+            }
+        } else {
+            spans.push(Span::raw("…".to_string()));
+        }
+    }
+
+    spans
+}
 
 fn trunc(s: &str, max: usize) -> String {
     if max == 0 {

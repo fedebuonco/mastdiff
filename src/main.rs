@@ -16,6 +16,7 @@ mod input;
 mod logger;
 mod project;
 mod search;
+mod syntax;
 mod text_diff;
 mod ui;
 
