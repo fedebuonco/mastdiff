@@ -4,18 +4,23 @@
 //! common build-output directories) and falls back to a recursive directory
 //! walk collecting `.cpp`, `.cc`, `.cxx`, `.C`, `.h`, `.hpp`, `.hxx`, and `.H` files.
 //!
-//! Each [`TranslationUnit`] carries a list of `associated_headers` — header
-//! files with the same stem found in the same directory — so the project browser
-//! can show them as expandable children.
+//! Header association uses **static analysis**: each source file is parsed
+//! with tree-sitter to extract its `#include "..."` directives (local includes
+//! only; `<system>` headers are ignored).  The raw include strings are resolved
+//! against the project's known header paths to find the actual files.
+//!
+//! A **reverse index** (`included_by`) is also built on every header, listing
+//! the source files that directly `#include` it.
 //!
 //! CMake targets are parsed from any `CMakeLists.txt` files in the tree and
 //! returned alongside the file list in [`ProjectData`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use tree_sitter::{Parser, Query, QueryCursor};
 use serde::Deserialize;
 use walkdir::WalkDir;
 
@@ -27,9 +32,12 @@ pub struct TranslationUnit {
     pub file_size: u64,
     /// True for header files (.h/.hpp/.hxx/.H).
     pub is_header: bool,
-    /// Header files with the same stem in the same directory.
-    /// Populated only for source files; empty for headers.
+    /// Headers directly `#include`d by this source file (sources only).
+    /// Populated by static analysis of `#include "..."` directives.
     pub associated_headers: Vec<String>,
+    /// Source files that directly `#include` this header (headers only).
+    /// Empty for source files.
+    pub included_by: Vec<String>,
 }
 
 impl TranslationUnit {
@@ -84,49 +92,96 @@ pub fn load(dir: &Path) -> Result<ProjectData> {
         tus
     };
 
-    // Build a stem → Vec<header_path> map so we can match headers that live
-    // in a different directory (e.g. include/ vs src/).
-    let mut stem_to_headers: HashMap<String, Vec<String>> = HashMap::new();
-    for tu in files.iter().filter(|tu| tu.is_header) {
-        let stem = Path::new(&tu.file_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
+    // ── Static include analysis ───────────────────────────────────────────
+    // Build lookup structures for resolving raw include strings to file paths.
+    let header_paths: HashSet<String> = files
+        .iter()
+        .filter(|tu| tu.is_header)
+        .map(|tu| tu.file_path.clone())
+        .collect();
+
+    // filename → [full_path] for headers (e.g. "audio.h" → ["/…/include/audio.h"])
+    let mut header_by_name: HashMap<String, Vec<String>> = HashMap::new();
+    for p in &header_paths {
+        let name = Path::new(p)
+            .file_name()
+            .and_then(|n| n.to_str())
             .unwrap_or("")
-            .to_lowercase();
-        stem_to_headers.entry(stem).or_default().push(tu.file_path.clone());
+            .to_string();
+        header_by_name.entry(name).or_default().push(p.clone());
     }
 
-    // Associate headers with each source file by matching stem.
-    // Same-directory matches are listed first, then others, deduplicated.
-    for tu in &mut files {
-        if tu.is_header { continue; }
-        let stem = Path::new(&tu.file_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let src_dir = Path::new(&tu.file_path)
-            .parent()
-            .and_then(|p| p.to_str())
-            .unwrap_or("");
+    // path_suffix → full_path for partial-path matching
+    // e.g. "spdlog/spdlog.h" can match from inside include/
+    let mut header_by_suffix: HashMap<String, String> = HashMap::new();
+    for p in &header_paths {
+        // Index every trailing sub-path of depth 1..4
+        let components: Vec<&str> = p.split('/').collect();
+        for depth in 1..=components.len().min(4) {
+            let suffix = components[components.len() - depth..].join("/");
+            header_by_suffix.entry(suffix).or_insert_with(|| p.clone());
+        }
+    }
 
-        if let Some(candidates) = stem_to_headers.get(&stem) {
-            // Same-dir first, then cross-dir
-            let mut same: Vec<&String> = candidates.iter()
-                .filter(|h| Path::new(h).parent().and_then(|p| p.to_str()) == Some(src_dir))
-                .collect();
-            let mut other: Vec<&String> = candidates.iter()
-                .filter(|h| Path::new(h).parent().and_then(|p| p.to_str()) != Some(src_dir))
-                .collect();
-            same.append(&mut other);
-            tu.associated_headers = same.into_iter().cloned().collect();
+    // Collect all unique source directory paths as additional include-path hints.
+    let include_dirs: Vec<String> = files
+        .iter()
+        .filter_map(|tu| Path::new(&tu.file_path).parent()?.to_str().map(str::to_owned))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    // Parse #include directives from every source file using tree-sitter,
+    // resolve to actual paths in the project, and record associations both
+    // ways: source → headers (associated_headers) and header → sources (included_by).
+    let mut included_by: HashMap<String, Vec<String>> = HashMap::new(); // header → sources
+
+    // We need to iterate by index to later mutate `files`.
+    let source_indices: Vec<usize> = files
+        .iter()
+        .enumerate()
+        .filter(|(_, tu)| !tu.is_header)
+        .map(|(i, _)| i)
+        .collect();
+
+    for &si in &source_indices {
+        let src_path = files[si].file_path.clone();
+        let raw_includes = extract_local_includes(&src_path);
+        let inc_dirs: Vec<&str> = include_dirs.iter().map(|s| s.as_str()).collect();
+        let resolved = resolve_includes(
+            &src_path,
+            &raw_includes,
+            &header_by_name,
+            &header_by_suffix,
+            &inc_dirs,
+        );
+        for h in &resolved {
+            included_by.entry(h.clone()).or_default().push(src_path.clone());
+        }
+        files[si].associated_headers = resolved;
+        log::debug!(
+            "includes: {} → {} headers",
+            Path::new(&src_path).file_name().and_then(|n| n.to_str()).unwrap_or("?"),
+            files[si].associated_headers.len()
+        );
+    }
+
+    // Populate included_by on header entries.
+    for tu in &mut files {
+        if !tu.is_header { continue; }
+        if let Some(sources) = included_by.get(&tu.file_path) {
+            tu.included_by = sources.clone();
         }
     }
 
     for tu in &files {
-        log::trace!("  {}{} ({})",
+        log::trace!(
+            "  {}{} ({}) hdrs={} iby={}",
             if tu.is_header { "[H] " } else { "    " },
-            tu.file_path, tu.size_label());
+            tu.file_path, tu.size_label(),
+            tu.associated_headers.len(),
+            tu.included_by.len()
+        );
     }
 
     let cmake_targets = find_cmake_targets(dir);
@@ -171,6 +226,7 @@ fn load_from_compile_commands(path: &Path, project_root: &Path) -> Result<Vec<Tr
                 file_size,
                 is_header: false,
                 associated_headers: vec![],
+                included_by: vec![],
             })
         })
         .collect();
@@ -200,6 +256,7 @@ fn load_from_walk(dir: &Path) -> Result<Vec<TranslationUnit>> {
                 file_size,
                 is_header: hdr,
                 associated_headers: vec![],
+                included_by: vec![],
             }
         })
         .collect();
@@ -222,9 +279,98 @@ fn walk_headers(dir: &Path) -> Vec<TranslationUnit> {
                 file_size,
                 is_header: true,
                 associated_headers: vec![],
+                included_by: vec![],
             }
         })
         .collect()
+}
+
+// ── Include analysis ──────────────────────────────────────────────────────
+
+/// Parse `#include "..."` directives from a source file using tree-sitter.
+/// Only quoted (local) includes are returned; `<system>` headers are skipped.
+fn extract_local_includes(path: &str) -> Vec<String> {
+    let Ok(src) = fs::read_to_string(path) else { return vec![] };
+    let mut parser = Parser::new();
+    let lang = tree_sitter_cpp::language();
+    if parser.set_language(&lang).is_err() { return vec![] }
+    let Some(tree) = parser.parse(&src, None) else { return vec![] };
+
+    let query_src = r#"(preproc_include path: (string_literal) @path)"#;
+    let Ok(query) = Query::new(&lang, query_src) else { return vec![] };
+    let mut cursor = QueryCursor::new();
+    let mut out = Vec::new();
+
+    for (m, _) in cursor.captures(&query, tree.root_node(), src.as_bytes()) {
+        let text = m.captures[0].node.utf8_text(src.as_bytes()).unwrap_or("");
+        // Strip surrounding quotes: "foo.h" → foo.h
+        let inner = text.trim_matches('"');
+        if !inner.is_empty() {
+            out.push(inner.to_string());
+        }
+    }
+    out
+}
+
+/// Resolve raw include strings (e.g. `"audio.h"`, `"spdlog/spdlog.h"`) to
+/// actual absolute file paths present in the project.
+///
+/// Resolution order (first match wins):
+/// 1. Relative to the source file's own directory.
+/// 2. Suffix match against all known header paths (handles `subdir/foo.h`).
+/// 3. Bare-filename match against all headers with that name.
+fn resolve_includes(
+    src_path: &str,
+    raw: &[String],
+    by_name: &HashMap<String, Vec<String>>,
+    by_suffix: &HashMap<String, String>,
+    _include_dirs: &[&str],
+) -> Vec<String> {
+    let src_dir = Path::new(src_path).parent().unwrap_or(Path::new(""));
+    let mut resolved: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for inc in raw {
+        // 1. Relative to source directory
+        let rel = src_dir.join(inc);
+        if let Ok(canon) = rel.canonicalize() {
+            let s = canon.to_string_lossy().into_owned();
+            if seen.insert(s.clone()) { resolved.push(s); }
+            continue;
+        }
+
+        // 2. Suffix match (handles include paths like "spdlog/fmt/fmt.h")
+        if let Some(full) = by_suffix.get(inc.as_str()) {
+            if seen.insert(full.clone()) { resolved.push(full.clone()); }
+            continue;
+        }
+
+        // 3. Bare filename fallback
+        let fname = Path::new(inc).file_name().and_then(|n| n.to_str()).unwrap_or(inc);
+        if let Some(candidates) = by_name.get(fname) {
+            if let Some(best) = pick_best(inc, candidates) {
+                if seen.insert(best.clone()) { resolved.push(best); }
+            }
+        }
+    }
+
+    resolved
+}
+
+/// Among multiple headers with the same filename, prefer the one whose path
+/// shares the longest common suffix with the raw include string.
+fn pick_best(raw_include: &str, candidates: &[String]) -> Option<String> {
+    candidates.iter()
+        .max_by_key(|c| {
+            // Count matching path components from the right
+            let raw_parts: Vec<&str> = raw_include.split('/').collect();
+            let cand_parts: Vec<&str> = c.split('/').collect();
+            raw_parts.iter().rev()
+                .zip(cand_parts.iter().rev())
+                .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
+                .count()
+        })
+        .cloned()
 }
 
 // ── CMake target discovery ────────────────────────────────────────────────
@@ -349,6 +495,7 @@ mod tests {
             file_size: size,
             is_header: is_header(path),
             associated_headers: vec![],
+            included_by: vec![],
         }
     }
 

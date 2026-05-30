@@ -185,7 +185,13 @@ fn render_row(app: &App, row: &ProjectRow, is_cursor: bool, width: usize) -> Lin
         ProjectRow::LooseHeader(idx) => {
             let tu = &app.project_files[*idx];
             let arrow = if is_cursor { "▶ " } else { "  " };
-            file_line(arrow, tu.short_name(), &tu.size_label(), is_cursor, width,
+            let right = if tu.included_by.is_empty() {
+                tu.size_label()
+            } else {
+                format!("← {} TU{}", tu.included_by.len(),
+                    if tu.included_by.len() == 1 { "" } else { "s" })
+            };
+            file_line(arrow, tu.short_name(), &right, is_cursor, width,
                       Color::Rgb(100, 200, 140))
         }
 
