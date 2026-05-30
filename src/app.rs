@@ -166,6 +166,7 @@ pub struct App {
     pub search_include: TextInput,     // "files to include" glob patterns (comma-separated)
     pub search_exclude: TextInput,     // "files to exclude" glob patterns (comma-separated)
     pub search_focus: SearchFocus,     // which input box has keyboard focus
+    pub search_use_regex: bool,        // Alt+R — treat query/filter as a regex
     pub search_query: SearchQuery,
     pub search_grep_mode: bool,        // true = plain grep, false = ts-query/shorthand
     pub search_results: Vec<SearchResult>,
@@ -197,6 +198,13 @@ pub struct App {
     pub search_results_area: Rect,
     pub search_source_area:  Rect,
     pub search_ast_area:     Rect,
+
+    // ---- source pane text selection (drag-to-select → Ctrl+C or auto-copy on release)
+    /// Anchor position of the current drag selection: (line, char_col) in file coords
+    pub search_sel_anchor: Option<(usize, usize)>,
+    /// Normalized selection range: (start, end) both in (line, char_col) file coords.
+    /// start <= end always.
+    pub search_sel: Option<((usize, usize), (usize, usize))>,
 }
 
 impl App {
@@ -254,6 +262,7 @@ impl App {
             search_include: TextInput::new(),
             search_exclude: TextInput::new(),
             search_focus: SearchFocus::Query,
+            search_use_regex: false,
             search_query: parse_query(""),
             search_grep_mode: false,
             search_results: vec![],
@@ -275,6 +284,8 @@ impl App {
             search_results_area: Rect::default(),
             search_source_area:  Rect::default(),
             search_ast_area:     Rect::default(),
+            search_sel_anchor: None,
+            search_sel: None,
         }
     }
 
@@ -330,6 +341,7 @@ impl App {
             search_include: TextInput::new(),
             search_exclude: TextInput::new(),
             search_focus: SearchFocus::Query,
+            search_use_regex: false,
             search_query: parse_query(""),
             search_grep_mode: false,
             search_results: vec![],
@@ -353,6 +365,8 @@ impl App {
             search_results_area: Rect::default(),
             search_source_area:  Rect::default(),
             search_ast_area:     Rect::default(),
+            search_sel_anchor: None,
+            search_sel: None,
         }
     }
 
@@ -414,6 +428,7 @@ impl App {
             search_include: TextInput::new(),
             search_exclude: TextInput::new(),
             search_focus: SearchFocus::Query,
+            search_use_regex: false,
             search_query: parse_query(""),
             search_grep_mode: false,
             search_results: vec![],
@@ -437,6 +452,8 @@ impl App {
             search_results_area: Rect::default(),
             search_source_area:  Rect::default(),
             search_ast_area:     Rect::default(),
+            search_sel_anchor: None,
+            search_sel: None,
         }
     }
 
@@ -1148,25 +1165,178 @@ impl App {
                     }
                 }
             }
-            // ── Click: select result ──────────────────────────────────────
+            // ── Mouse down: start selection in source pane, click in results ─
             MouseEventKind::Down(MouseButton::Left) => {
-                if rect_hit(self.search_results_area, col, row) && !self.search_results.is_empty()
-                {
-                    // Inner area of the block (subtract 1-pixel border all around)
+                if rect_hit(self.search_source_area, col, row) {
+                    // Start drag selection
+                    let pos = self.screen_to_source_pos(col, row);
+                    self.search_sel_anchor = pos;
+                    self.search_sel = pos.map(|p| (p, p));
+                } else if rect_hit(self.search_results_area, col, row) && !self.search_results.is_empty() {
+                    // Click to select result
                     let inner_y = self.search_results_area.y + 1;
                     if row >= inner_y {
                         let row_in_pane = (row - inner_y) as usize;
-                        // Each result occupies ROWS_PER_RESULT display lines
                         let idx = self.search_scroll + row_in_pane / ROWS_PER_RESULT;
                         if idx < self.search_results.len() {
                             log::debug!("mouse click: result #{}", idx);
                             self.search_selected = idx;
                             self.load_search_result(idx);
+                            // Clear source selection when changing result
+                            self.search_sel = None;
+                            self.search_sel_anchor = None;
                         }
                     }
                 }
             }
+            // ── Mouse drag: extend source selection, scroll if past edge ──
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.search_sel_anchor.is_some() {
+                    let cur = self.drag_source_pos(col, row);
+                    let anchor = self.search_sel_anchor.unwrap();
+                    let (start, end) = if anchor <= cur { (anchor, cur) } else { (cur, anchor) };
+                    self.search_sel = Some((start, end));
+                }
+            }
+            // ── Mouse up: finalize selection and auto-copy ────────────────
+            MouseEventKind::Up(MouseButton::Left) => {
+                if self.search_sel_anchor.is_some() {
+                    let cur = self.drag_source_pos(col, row);
+                    let anchor = self.search_sel_anchor.unwrap();
+                    let (start, end) = if anchor <= cur { (anchor, cur) } else { (cur, anchor) };
+                    self.search_sel = Some((start, end));
+                    self.search_sel_anchor = None;
+                    // Auto-copy if we have a non-empty selection
+                    if self.search_sel.map_or(false, |(s, e)| s != e) {
+                        self.copy_source_selection();
+                    }
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// Convert a screen (col, row) in terminal coordinates to a (line, char_col) pair
+    /// in source-file space, taking the scroll offset and gutter width into account.
+    /// Returns None if the position is outside the inner content area.
+    fn screen_to_source_pos(&self, col: u16, row: u16) -> Option<(usize, usize)> {
+        let area = self.search_source_area;
+        let inner_x = area.x + 1;
+        let inner_y = area.y + 1;
+        let inner_w = area.width.saturating_sub(2);
+        let inner_h = area.height.saturating_sub(2);
+        if col < inner_x || row < inner_y { return None; }
+        let cx = col - inner_x;
+        let cy = row - inner_y;
+        if cx >= inner_w || cy >= inner_h { return None; }
+
+        // Gutter: "{:4} " = 5 chars, prefix "  " or "▶ " = 2 chars → total 7 chars
+        const GUTTER: u16 = 7;
+        let char_col = cx.saturating_sub(GUTTER) as usize;
+        let file_line = self.search_source_scroll + cy as usize;
+        if file_line >= self.search_source_lines.len() { return None; }
+        Some((file_line, char_col))
+    }
+
+    /// Like `screen_to_source_pos` but always returns a valid position, even when
+    /// the mouse is above or below the visible source area.  When the cursor is
+    /// outside the top/bottom edge the scroll is advanced by one line in that
+    /// direction so that holding the mouse there produces continuous scrolling.
+    fn drag_source_pos(&mut self, col: u16, row: u16) -> (usize, usize) {
+        let area = self.search_source_area;
+        let inner_x  = area.x + 1;
+        let inner_y  = area.y + 1;
+        let inner_h  = area.height.saturating_sub(2) as usize;
+        let n_lines  = self.search_source_lines.len();
+
+        const GUTTER: u16 = 7;
+        // Horizontal char column (clamped to gutter edge and line length later)
+        let char_col = if col >= inner_x {
+            (col - inner_x).saturating_sub(GUTTER) as usize
+        } else {
+            0
+        };
+
+        if row < inner_y {
+            // ── Above the pane: scroll up one line, snap to start of that line ──
+            self.search_source_scroll = self.search_source_scroll.saturating_sub(1);
+            let file_line = self.search_source_scroll;
+            (file_line, 0)
+        } else {
+            let cy = (row - inner_y) as usize;
+            if cy >= inner_h {
+                // ── Below the pane: scroll down one line, snap to end of that line ──
+                let max_scroll = n_lines.saturating_sub(1);
+                self.search_source_scroll = (self.search_source_scroll + 1).min(max_scroll);
+                // Point at the last visible line
+                let file_line = (self.search_source_scroll + inner_h).min(n_lines).saturating_sub(1);
+                let line_len  = self.search_source_lines
+                    .get(file_line)
+                    .map(|l| l.chars().count())
+                    .unwrap_or(0);
+                (file_line, line_len)
+            } else {
+                // ── Inside the pane: normal mapping ──────────────────────────
+                let file_line = (self.search_source_scroll + cy).min(n_lines.saturating_sub(1));
+                let line_len  = self.search_source_lines
+                    .get(file_line)
+                    .map(|l| l.chars().count())
+                    .unwrap_or(0);
+                (file_line, char_col.min(line_len))
+            }
+        }
+    }
+
+    /// Extract the selected text from search_source_lines and copy it to the clipboard.
+    /// Updates status_msg with the result.
+    fn copy_source_selection(&mut self) {
+        let Some(((sl, sc), (el, ec))) = self.search_sel else {
+            self.status_msg = String::from(" No selection — drag to select text ");
+            return;
+        };
+        let mut parts: Vec<String> = Vec::new();
+        for line_idx in sl..=el {
+            let raw = match self.search_source_lines.get(line_idx) {
+                Some(l) => l.as_str(),
+                None => break,
+            };
+            let chars: Vec<char> = raw.chars().collect();
+            let from = if line_idx == sl { sc } else { 0 };
+            let to   = if line_idx == el { ec.min(chars.len()) } else { chars.len() };
+            let from = from.min(chars.len());
+            parts.push(chars[from..to].iter().collect());
+        }
+        let text = parts.join("\n");
+        let char_count = text.chars().count();
+        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+            Ok(_) => {
+                self.status_msg = format!(" Copied {} chars to clipboard ", char_count);
+            }
+            Err(e) => {
+                self.status_msg = format!(" Clipboard error: {} ", e);
+            }
+        }
+    }
+
+    /// Copy the currently highlighted AST node's kind, text, and line info to the clipboard.
+    fn copy_ast_node(&mut self) {
+        let Some(node) = self.search_ast_nodes.get(self.search_ast_highlight) else {
+            self.status_msg = String::from(" No AST node selected ");
+            return;
+        };
+        let text = if let Some(ref leaf) = node.leaf_text {
+            format!("{} \"{}\" :L{}", node.kind, leaf, node.source_row + 1)
+        } else {
+            format!("{} :L{}", node.kind, node.source_row + 1)
+        };
+        let char_count = text.chars().count();
+        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+            Ok(_) => {
+                self.status_msg = format!(" Copied {} chars (AST node) to clipboard ", char_count);
+            }
+            Err(e) => {
+                self.status_msg = format!(" Clipboard error: {} ", e);
+            }
         }
     }
 
@@ -1501,6 +1671,29 @@ impl App {
                 return;
             }
 
+            // ── Toggle regex mode (Alt+R)
+            KeyCode::Char('r') if key.modifiers == KeyModifiers::ALT => {
+                self.search_use_regex = !self.search_use_regex;
+                self.status_msg = if self.search_use_regex {
+                    String::from(" Regex ON — re-run search to apply ")
+                } else {
+                    String::from(" Regex OFF — re-run search to apply ")
+                };
+                return;
+            }
+
+            // ── Copy current source selection to clipboard (Ctrl+C)
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                self.copy_source_selection();
+                return;
+            }
+
+            // ── Copy current AST node info to clipboard (Ctrl+Y)
+            KeyCode::Char('y') if key.modifiers == KeyModifiers::CONTROL => {
+                self.copy_ast_node();
+                return;
+            }
+
             // ── Back — always returns to previous mode
             KeyCode::Esc => {
                 log::debug!("mode: Search → {:?}", self.search_prev_mode);
@@ -1554,9 +1747,12 @@ impl App {
                 capture_filter: String::new(),
                 grep_mode: true,
                 filter_nested_calls: false,
+                use_regex: self.search_use_regex,
             }
         } else {
-            parse_query(&raw)
+            let mut q = parse_query(&raw);
+            q.use_regex = self.search_use_regex;
+            q
         };
 
         // Apply include / exclude path filters (VS Code-style glob patterns).

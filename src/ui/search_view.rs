@@ -39,15 +39,44 @@ pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
 
 // ── Search bar ────────────────────────────────────────────────────────────
 
+/// Known shorthand prefixes and the accent color to use for each.
+const SHORTHANDS: &[(&str, Color)] = &[
+    ("fn:",      Color::Rgb(78, 201, 176)),   // teal
+    ("call:",    Color::Rgb(220, 160, 80)),   // orange
+    ("var:",     Color::Rgb(197, 134, 192)),  // purple
+    ("class:",   Color::Rgb(86, 156, 214)),   // blue
+    ("type:",    Color::Rgb(86, 156, 214)),   // blue
+    ("include:", Color::Rgb(150, 200, 100)),  // green
+    ("param:",   Color::Rgb(220, 220, 100)),  // yellow
+    ("field:",   Color::Rgb(200, 140, 200)),  // lavender
+];
+
 fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
     let focused = app.search_focus == SearchFocus::Query;
     let (mode_label, hint) = if app.search_grep_mode {
-        ("GREP", " type text to search across all files  Tab:filters  Enter:run  Esc:back")
+        ("GREP", " type text  Tab:filters  Enter:run  Alt+R:regex  Esc:back")
     } else {
-        ("AST ", " fn: call: var: class: type: include: param: field:  (ts-query) @cap  Tab:filters  Enter:run")
+        ("AST ", " fn: call: var: class: type: include: param: field:  (ts-query)  Tab:filters  Enter:run  Alt+R:regex")
     };
     let base_color = if app.search_grep_mode { Color::Yellow } else { Color::Cyan };
     let border_color = if focused { base_color } else { Color::Rgb(60, 80, 100) };
+
+    // Regex toggle badge shown in the title bar
+    let regex_badge = if app.search_use_regex {
+        Span::styled(
+            " [.*] ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(200, 120, 60))
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            " [.*] ",
+            Style::default().fg(Color::Rgb(70, 70, 90)),
+        )
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
@@ -56,16 +85,17 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
                 format!(" {} ", mode_label),
                 Style::default()
                     .fg(Color::Black)
-                    .bg(if app.search_grep_mode { Color::Yellow } else { Color::Cyan })
+                    .bg(base_color)
                     .add_modifier(Modifier::BOLD),
             ),
+            regex_badge,
             Span::styled(hint, Style::default().fg(Color::DarkGray)),
         ]));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    render_text_input(f, app.search_input.as_str(), app.search_input.cursor_col(),
-                      focused, Color::Cyan, inner);
+    render_query_input(f, app.search_input.as_str(), app.search_input.cursor_col(),
+                       focused, app.search_grep_mode, inner);
 }
 
 // ── Filter bar (include / exclude) ───────────────────────────────────────
@@ -137,25 +167,122 @@ fn render_filter_box(
     }
 }
 
-/// Render a text input line with an optional blinking-style cursor.
-fn render_text_input(f: &mut Frame, text: &str, cursor_col: usize, focused: bool, accent: Color, area: Rect) {
+/// Syntax-aware query input: colours the recognised prefix (e.g. `fn:`) differently
+/// from the filter text that follows.  Falls back to plain rendering for grep mode
+/// or raw tree-sitter queries.
+fn render_query_input(
+    f: &mut Frame,
+    text: &str,
+    cursor_col: usize,
+    focused: bool,
+    grep_mode: bool,
+    area: Rect,
+) {
+    // Resolve the prefix length and per-segment colours.
+    let (prefix_len, kw_color, ft_color): (usize, Color, Color) = if grep_mode {
+        (0, Color::White, Color::White)
+    } else if text.starts_with('(') || text.starts_with('[') {
+        // Raw TS query — whole thing in orange
+        (0, Color::Rgb(220, 160, 80), Color::Rgb(220, 160, 80))
+    } else {
+        let mut found = (0usize, Color::White, Color::White);
+        for &(prefix, color) in SHORTHANDS {
+            if text.starts_with(prefix) {
+                found = (prefix.len(), color, Color::White);
+                break;
+            }
+        }
+        found
+    };
+
+    let chars: Vec<char> = text.chars().collect();
+    let n     = chars.len();
+    let plen  = prefix_len.min(n);
+    // Clamp cursor into [0, n] so it is always a valid split point.
+    let cur   = cursor_col.min(n);
+
+    // Bright block cursor — high contrast regardless of surrounding colours.
+    let cur_style = Style::default().fg(Color::Black).bg(Color::White);
+    let kw_style  = Style::default().fg(kw_color).add_modifier(Modifier::BOLD);
+    let ft_style  = Style::default().fg(ft_color);
+
     if focused {
-        let before: String = text.chars().take(cursor_col).collect();
-        let at: String = text.chars().nth(cursor_col)
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| " ".to_string());
-        let after: String = text.chars().skip(cursor_col + 1).collect();
+        let mut spans: Vec<Span> = vec![Span::raw(" ")];
+
+        if cur < plen {
+            // ── Cursor is inside the keyword prefix ──────────────────────
+            // [kw 0..cur] [cursor] [kw cur+1..plen] [ft plen..n]
+            if cur > 0 {
+                spans.push(Span::styled(chars[..cur].iter().collect::<String>(), kw_style));
+            }
+            spans.push(Span::styled(chars[cur..cur+1].iter().collect::<String>(), cur_style));
+            if cur + 1 < plen {
+                spans.push(Span::styled(chars[cur+1..plen].iter().collect::<String>(), kw_style));
+            }
+            if plen < n {
+                spans.push(Span::styled(chars[plen..].iter().collect::<String>(), ft_style));
+            }
+        } else {
+            // ── Cursor is in the filter portion (or at end) ───────────────
+            // [kw 0..plen] [ft plen..cur] [cursor] [ft cur+1..n]
+            if plen > 0 {
+                spans.push(Span::styled(chars[..plen].iter().collect::<String>(), kw_style));
+            }
+            if cur > plen {
+                spans.push(Span::styled(chars[plen..cur].iter().collect::<String>(), ft_style));
+            }
+            // Character at cursor (or a space if we're past the end)
+            let at: String = if cur < n {
+                chars[cur..cur+1].iter().collect()
+            } else {
+                " ".to_string()
+            };
+            spans.push(Span::styled(at, cur_style));
+            if cur + 1 < n {
+                spans.push(Span::styled(chars[cur+1..].iter().collect::<String>(), ft_style));
+            }
+        }
+
+        f.render_widget(Paragraph::new(Line::from(spans)), area);
+        // Also set the real terminal cursor (enables blinking in supporting terminals).
+        let cx = area.x + 1 + cur as u16;
+        if cx < area.x + area.width {
+            f.set_cursor_position((cx, area.y));
+        }
+    } else {
+        // Not focused — dim the prefix colour, grey out the filter.
+        let prefix: String = chars[..plen].iter().collect();
+        let filter: String = chars[plen..].iter().collect();
+        let line = Line::from(vec![
+            Span::raw(" "),
+            Span::styled(prefix, Style::default().fg(kw_color).add_modifier(Modifier::DIM)),
+            Span::styled(filter, Style::default().fg(Color::Rgb(130, 130, 150))),
+        ]);
+        f.render_widget(Paragraph::new(line), area);
+    }
+}
+
+/// Render a text input line with an optional blinking-style cursor.
+fn render_text_input(f: &mut Frame, text: &str, cursor_col: usize, focused: bool, _accent: Color, area: Rect) {
+    if focused {
+        let chars: Vec<char> = text.chars().collect();
+        let n   = chars.len();
+        let cur = cursor_col.min(n);
+
+        let before: String = chars[..cur].iter().collect();
+        let at: String     = if cur < n { chars[cur..cur+1].iter().collect() } else { " ".to_string() };
+        let after: String  = if cur + 1 < n { chars[cur+1..].iter().collect() } else { String::new() };
 
         let line = Line::from(vec![
             Span::raw(" "),
             Span::styled(before, Style::default().fg(Color::White)),
-            Span::styled(at, Style::default().fg(Color::Black).bg(accent)),
+            Span::styled(at,    Style::default().fg(Color::Black).bg(Color::White)),
             Span::styled(after, Style::default().fg(Color::White)),
         ]);
         f.render_widget(Paragraph::new(line), area);
 
-        // Terminal cursor position
-        let cx = area.x + 1 + cursor_col as u16;
+        // Terminal cursor position (enables blinking in supporting terminals).
+        let cx = area.x + 1 + cur as u16;
         if cx < area.x + area.width {
             f.set_cursor_position((cx, area.y));
         }
@@ -321,11 +448,13 @@ fn render_source_pane(f: &mut Frame, app: &App, area: Rect) {
         .map(|r| r.short_path())
         .unwrap_or("");
 
+    // Show "Drag to select • Ctrl+C copy" hint in title when a selection exists
+    let sel_hint = if app.search_sel.is_some() { "  [Ctrl+C:copy]" } else { "" };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Rgb(60, 80, 60)))
         .title(Span::styled(
-            format!(" {} ", file_name),
+            format!(" {}{} ", file_name, sel_hint),
             Style::default().fg(Color::Rgb(150, 220, 150)),
         ));
     let inner = block.inner(area);
@@ -337,6 +466,9 @@ fn render_source_pane(f: &mut Frame, app: &App, area: Rect) {
     let end = (scroll + view_height).min(total);
     let width = inner.width as usize;
 
+    // Normalize selection to (start_line, start_col, end_line, end_col) or None
+    let sel = app.search_sel;
+
     let lines: Vec<Line> = (scroll..end)
         .map(|row| {
             let is_highlight = row == app.search_source_highlight;
@@ -345,32 +477,140 @@ fn render_source_pane(f: &mut Frame, app: &App, area: Rect) {
             let max_text_width = width.saturating_sub(7); // 5 for lno, 2 for prefix "▶ "/"  "
 
             if is_highlight {
-                // Highlighted row: gutter + arrow + highlighted plain text (no syntax colour)
+                // Highlighted row: gutter + arrow + highlighted plain text with optional sel overlay
                 let text = trunc(raw_text, max_text_width);
-                Line::from(vec![
+                let mut spans = vec![
                     Span::styled(lno, Style::default().fg(Color::Rgb(220, 200, 80)).add_modifier(Modifier::BOLD)),
-                    Span::styled(
+                ];
+                if let Some(((sl, sc), (el, ec))) = sel {
+                    if row >= sl && row <= el {
+                        let chars: Vec<char> = format!("▶ {}", text).chars().collect();
+                        // Prefix "▶ " is 2 chars; selection col offset starts there
+                        let prefix_len = 2usize;
+                        let sel_from = if row == sl { sc + prefix_len } else { prefix_len };
+                        let sel_to   = if row == el { (ec + prefix_len).min(chars.len()) } else { chars.len() };
+                        spans.extend(split_selection_spans(
+                            &chars.iter().collect::<String>(),
+                            sel_from, sel_to,
+                            Style::default().bg(Color::Rgb(50, 50, 0)).fg(Color::Rgb(255, 240, 100)).add_modifier(Modifier::BOLD),
+                            Style::default().bg(Color::Rgb(80, 70, 20)).fg(Color::Rgb(255, 255, 180)).add_modifier(Modifier::BOLD),
+                        ));
+                    } else {
+                        spans.push(Span::styled(
+                            format!("▶ {}", text),
+                            Style::default().bg(Color::Rgb(50, 50, 0)).fg(Color::Rgb(255, 240, 100)).add_modifier(Modifier::BOLD),
+                        ));
+                    }
+                } else {
+                    spans.push(Span::styled(
                         format!("▶ {}", text),
-                        Style::default()
-                            .bg(Color::Rgb(50, 50, 0))
-                            .fg(Color::Rgb(255, 240, 100))
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ])
+                        Style::default().bg(Color::Rgb(50, 50, 0)).fg(Color::Rgb(255, 240, 100)).add_modifier(Modifier::BOLD),
+                    ));
+                }
+                Line::from(spans)
             } else {
-                // Normal row: gutter + syntax-coloured spans
+                // Normal row: gutter + syntax-coloured spans (with optional selection overlay)
                 let empty_tokens: Vec<SyntaxSpan> = vec![];
                 let tokens = app.search_source_tokens.get(row).unwrap_or(&empty_tokens);
                 let gutter = Span::styled(lno, Style::default().fg(Color::Rgb(70, 70, 90)));
                 let prefix  = Span::raw("  ");
                 let mut spans = vec![gutter, prefix];
-                spans.extend(syntax_spans(raw_text, tokens, max_text_width));
+
+                if let Some(((sl, sc), (el, ec))) = sel {
+                    if row >= sl && row <= el {
+                        let raw_trunc = trunc(raw_text, max_text_width);
+                        let sel_from = if row == sl { sc } else { 0 };
+                        let sel_to   = if row == el { ec } else { raw_trunc.chars().count() };
+                        // Build syntax spans then overlay selection highlight
+                        let base = syntax_spans(raw_text, tokens, max_text_width);
+                        spans.extend(overlay_selection(base, sel_from, sel_to));
+                    } else {
+                        spans.extend(syntax_spans(raw_text, tokens, max_text_width));
+                    }
+                } else {
+                    spans.extend(syntax_spans(raw_text, tokens, max_text_width));
+                }
                 Line::from(spans)
             }
         })
         .collect();
 
     f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Split a string into up to three spans: before selection (base_style), selection
+/// (sel_style), after selection (base_style).
+fn split_selection_spans(
+    text: &str,
+    sel_from: usize,
+    sel_to: usize,
+    base_style: Style,
+    sel_style: Style,
+) -> Vec<Span<'static>> {
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    let sf = sel_from.min(n);
+    let st = sel_to.min(n);
+    let mut out = Vec::new();
+    if sf > 0 {
+        out.push(Span::styled(chars[..sf].iter().collect::<String>(), base_style));
+    }
+    if sf < st {
+        out.push(Span::styled(chars[sf..st].iter().collect::<String>(), sel_style));
+    }
+    if st < n {
+        out.push(Span::styled(chars[st..].iter().collect::<String>(), base_style));
+    }
+    out
+}
+
+/// Walk existing syntax spans and apply selection highlight in the [sel_from, sel_to) char range.
+/// The spans already have their text; we split and re-style as needed.
+fn overlay_selection(spans: Vec<Span<'static>>, sel_from: usize, sel_to: usize) -> Vec<Span<'static>> {
+    let sel_bg = Color::Rgb(60, 80, 140);
+    let sel_fg = Color::White;
+    let mut result: Vec<Span<'static>> = Vec::new();
+    let mut pos = 0usize; // char position in the rendered text
+
+    for span in spans {
+        let span_chars: Vec<char> = span.content.chars().collect();
+        let span_len = span_chars.len();
+        let span_end = pos + span_len;
+
+        let base_style = span.style;
+        let in_sel_from = sel_from.max(pos);
+        let in_sel_to   = sel_to.min(span_end);
+
+        if in_sel_from >= in_sel_to {
+            // No overlap — keep as-is
+            result.push(span);
+        } else {
+            // before selection
+            let before = in_sel_from - pos;
+            if before > 0 {
+                result.push(Span::styled(
+                    span_chars[..before].iter().collect::<String>(),
+                    base_style,
+                ));
+            }
+            // selected part
+            let sel_start = in_sel_from - pos;
+            let sel_end   = in_sel_to - pos;
+            result.push(Span::styled(
+                span_chars[sel_start..sel_end].iter().collect::<String>(),
+                base_style.bg(sel_bg).fg(sel_fg),
+            ));
+            // after selection
+            if sel_end < span_len {
+                result.push(Span::styled(
+                    span_chars[sel_end..].iter().collect::<String>(),
+                    base_style,
+                ));
+            }
+        }
+        pos = span_end;
+    }
+    result
 }
 
 fn render_ast_pane(f: &mut Frame, app: &App, area: Rect) {

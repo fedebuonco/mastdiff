@@ -77,6 +77,9 @@ fn left_column() -> Vec<Line<'static>> {
     row(&mut lines, "Esc",            "return to previous view");
     row(&mut lines, "scroll (mouse)", "scroll source / AST / results independently");
     row(&mut lines, "click (mouse)",  "select a result row");
+    row(&mut lines, "drag (mouse)",   "select text in source pane");
+    row(&mut lines, "Ctrl+C",         "copy source selection to clipboard");
+    row(&mut lines, "Ctrl+Y",         "copy highlighted AST node to clipboard");
 
     lines
 }
