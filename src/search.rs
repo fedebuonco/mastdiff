@@ -175,6 +175,109 @@ impl SearchResult {
     }
 }
 
+// ── File-path filter (include / exclude boxes) ────────────────────────────
+
+/// A set of glob patterns parsed from one filter box (comma-separated).
+///
+/// Supports:
+/// - `*`  — any characters except `/`
+/// - `**` — any characters including `/`
+/// - `?`  — any single character except `/`
+///
+/// If the pattern contains no `/`, it is matched against the **filename only**.
+/// Otherwise it is matched against the **relative path** from the project root.
+#[derive(Debug, Clone, Default)]
+pub struct FileFilter {
+    patterns: Vec<String>,
+}
+
+impl FileFilter {
+    pub fn parse(raw: &str) -> Self {
+        let patterns = raw
+            .split(',')
+            .flat_map(|s| s.split(';'))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        Self { patterns }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    /// Returns `true` if `path` matches **any** of the patterns.
+    pub fn matches(&self, path: &str) -> bool {
+        if self.patterns.is_empty() {
+            return true;
+        }
+        self.patterns.iter().any(|pat| glob_match(pat, path))
+    }
+}
+
+/// Match `path` against a glob `pattern`.
+fn glob_match(pattern: &str, path: &str) -> bool {
+    // Normalise separators.
+    let path_norm: String = path.replace('\\', "/");
+    let p = path_norm.as_str();
+
+    // Patterns without `/` match against the filename component only.
+    if !pattern.contains('/') {
+        let fname = p.rsplit('/').next().unwrap_or(p);
+        return glob_bytes(pattern.as_bytes(), fname.as_bytes());
+    }
+
+    glob_bytes(pattern.as_bytes(), p.as_bytes())
+}
+
+/// Recursive byte-level glob matcher.
+/// `*`  matches any sequence of bytes that is not `/`.
+/// `**` matches any sequence of bytes including `/`.
+/// `?`  matches exactly one byte that is not `/`.
+fn glob_bytes(p: &[u8], t: &[u8]) -> bool {
+    match p.first() {
+        None => t.is_empty(),
+        Some(b'*') if p.get(1) == Some(&b'*') => {
+            // `**` — consume optional trailing slash in pattern
+            let rest = match p.get(2) {
+                Some(b'/') => &p[3..],
+                _           => &p[2..],
+            };
+            // Try: ** matches zero components (nothing consumed)
+            if glob_bytes(rest, t) { return true; }
+            // Try: ** matches one or more path components
+            let mut i = 0;
+            while i < t.len() {
+                if t[i] == b'/' && glob_bytes(rest, &t[i + 1..]) {
+                    return true;
+                }
+                i += 1;
+            }
+            // Also try matching rest against the very end (last component)
+            glob_bytes(rest, &t[t.len()..]) // empty suffix
+        }
+        Some(b'*') => {
+            // Single `*` — does not cross `/`
+            let rest = &p[1..];
+            if glob_bytes(rest, t) { return true; }
+            let mut i = 0;
+            while i < t.len() && t[i] != b'/' {
+                i += 1;
+                if glob_bytes(rest, &t[i..]) { return true; }
+            }
+            false
+        }
+        Some(b'?') => match t.first() {
+            Some(&c) if c != b'/' => glob_bytes(&p[1..], &t[1..]),
+            _ => false,
+        },
+        Some(&pc) => match t.first() {
+            Some(&tc) if tc == pc => glob_bytes(&p[1..], &t[1..]),
+            _ => false,
+        },
+    }
+}
+
 // ── Project-wide parallel search ─────────────────────────────────────────
 
 pub fn search_project(files: &[String], query: &SearchQuery) -> Vec<SearchResult> {
@@ -642,6 +745,80 @@ void bootstrap() {
         let results = search_src("fake.cpp", src, &q);
         assert_eq!(results.len(), 1, "expected exactly one call to main(), got {:?}", results);
         assert!(results[0].snippet.contains("main"));
+    }
+
+    // ── FileFilter / glob ────────────────────────────────────────────────
+
+    #[test]
+    fn filter_empty_matches_everything() {
+        let f = FileFilter::parse("");
+        assert!(f.is_empty());
+        assert!(f.matches("src/foo.cpp"));
+        assert!(f.matches("tests/bar.cpp"));
+    }
+
+    #[test]
+    fn filter_star_star_matches_any_subdir() {
+        let f = FileFilter::parse("src/**");
+        assert!(f.matches("src/audio/Player.cpp"));
+        assert!(f.matches("src/main.cpp"));
+        assert!(!f.matches("tests/audio/Player.cpp"));
+        assert!(!f.matches("vendor/lib.cpp"));
+    }
+
+    #[test]
+    fn filter_extension_glob_no_slash() {
+        let f = FileFilter::parse("*.cpp");
+        assert!(f.matches("src/foo.cpp"));
+        assert!(f.matches("main.cpp"));
+        assert!(!f.matches("src/foo.h"));
+    }
+
+    #[test]
+    fn filter_double_star_in_middle() {
+        let f = FileFilter::parse("**/test/**");
+        assert!(f.matches("src/test/foo.cpp"));
+        assert!(f.matches("test/bar.cpp"));
+        assert!(!f.matches("src/main.cpp"));
+    }
+
+    #[test]
+    fn filter_comma_separates_patterns() {
+        let f = FileFilter::parse("tests/**,vendor/**");
+        assert!(f.matches("tests/foo.cpp"));
+        assert!(f.matches("vendor/bar.cpp"));
+        assert!(!f.matches("src/main.cpp"));
+    }
+
+    #[test]
+    fn filter_semicolon_separates_patterns() {
+        let f = FileFilter::parse("tests/**;vendor/**");
+        assert!(f.matches("tests/foo.cpp"));
+        assert!(!f.matches("src/main.cpp"));
+    }
+
+    #[test]
+    fn filter_question_mark() {
+        let f = FileFilter::parse("src/?.cpp");
+        assert!(f.matches("src/a.cpp"));
+        assert!(!f.matches("src/ab.cpp"));
+        assert!(!f.matches("src/a/b.cpp"));
+    }
+
+    #[test]
+    fn filter_exact_filename() {
+        let f = FileFilter::parse("main.cpp");
+        assert!(f.matches("src/main.cpp"));
+        assert!(f.matches("main.cpp"));
+        assert!(!f.matches("src/notmain.cpp"));
+    }
+
+    #[test]
+    fn filter_header_extension() {
+        let f = FileFilter::parse("*.h,*.hpp");
+        assert!(f.matches("include/Audio.h"));
+        assert!(f.matches("src/Player.hpp"));
+        assert!(!f.matches("src/Player.cpp"));
     }
 }
 

@@ -6,24 +6,29 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, ROWS_PER_RESULT};
+use crate::app::{App, SearchFocus, ROWS_PER_RESULT};
 use crate::ast_diff::AstLine;
 use crate::syntax::SyntaxSpan;
 
 pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
-    // Vertical split: input bar on top, body below
+    // Vertical stack: query bar (3) + filter bar (3) + body (rest)
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(1)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(1),
+        ])
         .split(area);
 
     render_search_bar(f, app, outer[0]);
+    render_filter_bar(f, app, outer[1]);
 
     // Body: results list on left, source+AST on right
     let body = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(36), Constraint::Min(1)])
-        .split(outer[1]);
+        .split(outer[2]);
 
     // Store areas for mouse hit-testing (updated every frame)
     app.search_results_area = body[0];
@@ -35,14 +40,17 @@ pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
 // ── Search bar ────────────────────────────────────────────────────────────
 
 fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
+    let focused = app.search_focus == SearchFocus::Query;
     let (mode_label, hint) = if app.search_grep_mode {
-        ("GREP", " type text to search across all files  Enter:run  Esc:back")
+        ("GREP", " type text to search across all files  Tab:filters  Enter:run  Esc:back")
     } else {
-        ("AST ", " fn: call: var: class: type: include: param: field:  or  (ts-query) @cap  Enter:run  Esc:back")
+        ("AST ", " fn: call: var: class: type: include: param: field:  (ts-query) @cap  Tab:filters  Enter:run")
     };
+    let base_color = if app.search_grep_mode { Color::Yellow } else { Color::Cyan };
+    let border_color = if focused { base_color } else { Color::Rgb(60, 80, 100) };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app.search_grep_mode { Color::Yellow } else { Color::Cyan }))
+        .border_style(Style::default().fg(border_color))
         .title(Line::from(vec![
             Span::styled(
                 format!(" {} ", mode_label),
@@ -56,24 +64,110 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let text = app.search_input.as_str();
-    let cursor_col = app.search_input.cursor_col();
+    render_text_input(f, app.search_input.as_str(), app.search_input.cursor_col(),
+                      focused, Color::Cyan, inner);
+}
 
-    let before_chars: String = text.chars().take(cursor_col).collect();
-    let at_char: String = text.chars().nth(cursor_col).map(|c| c.to_string()).unwrap_or_else(|| " ".to_string());
-    let after_chars: String = text.chars().skip(cursor_col + 1).collect();
+// ── Filter bar (include / exclude) ───────────────────────────────────────
 
-    let line = Line::from(vec![
-        Span::styled("> ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::raw(before_chars),
-        Span::styled(at_char, Style::default().add_modifier(Modifier::REVERSED)),
-        Span::raw(after_chars),
-    ]);
-    f.render_widget(Paragraph::new(line), inner);
+fn render_filter_bar(f: &mut Frame, app: &App, area: Rect) {
+    // Split horizontally: include on left, exclude on right (equal halves)
+    let halves = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
 
-    let cx = inner.x + 2 + cursor_col as u16;
-    if cx < inner.x + inner.width {
-        f.set_cursor_position((cx, inner.y));
+    render_filter_box(
+        f,
+        "✚ files to include",
+        "e.g. src/**,*.cpp",
+        app.search_include.as_str(),
+        app.search_include.cursor_col(),
+        app.search_focus == SearchFocus::Include,
+        Color::Rgb(80, 180, 80),
+        halves[0],
+    );
+    render_filter_box(
+        f,
+        "⊘ files to exclude",
+        "e.g. tests/**,vendor/**",
+        app.search_exclude.as_str(),
+        app.search_exclude.cursor_col(),
+        app.search_focus == SearchFocus::Exclude,
+        Color::Rgb(200, 80, 80),
+        halves[1],
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_filter_box(
+    f: &mut Frame,
+    title: &str,
+    placeholder: &str,
+    text: &str,
+    cursor_col: usize,
+    focused: bool,
+    accent: Color,
+    area: Rect,
+) {
+    let border_color = if focused { accent } else { Color::Rgb(50, 55, 70) };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
+        .title(Span::styled(
+            format!(" {} ", title),
+            Style::default()
+                .fg(if focused { accent } else { Color::Rgb(100, 100, 120) })
+                .add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() }),
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if text.is_empty() && !focused {
+        // Show placeholder
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" {}", placeholder),
+                Style::default().fg(Color::Rgb(60, 65, 80)),
+            )),
+            inner,
+        );
+    } else {
+        render_text_input(f, text, cursor_col, focused, accent, inner);
+    }
+}
+
+/// Render a text input line with an optional blinking-style cursor.
+fn render_text_input(f: &mut Frame, text: &str, cursor_col: usize, focused: bool, accent: Color, area: Rect) {
+    if focused {
+        let before: String = text.chars().take(cursor_col).collect();
+        let at: String = text.chars().nth(cursor_col)
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| " ".to_string());
+        let after: String = text.chars().skip(cursor_col + 1).collect();
+
+        let line = Line::from(vec![
+            Span::raw(" "),
+            Span::styled(before, Style::default().fg(Color::White)),
+            Span::styled(at, Style::default().fg(Color::Black).bg(accent)),
+            Span::styled(after, Style::default().fg(Color::White)),
+        ]);
+        f.render_widget(Paragraph::new(line), area);
+
+        // Terminal cursor position
+        let cx = area.x + 1 + cursor_col as u16;
+        if cx < area.x + area.width {
+            f.set_cursor_position((cx, area.y));
+        }
+    } else {
+        // Dimmed, no cursor
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" {}", text),
+                Style::default().fg(Color::Rgb(150, 150, 170)),
+            )),
+            area,
+        );
     }
 }
 

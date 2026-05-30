@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::export;
 use crate::input::TextInput;
 use crate::project::TranslationUnit;
-use crate::search::{parse_query, search_project, SearchQuery, SearchResult};
+use crate::search::{parse_query, search_project, FileFilter, SearchQuery, SearchResult};
 use crate::syntax::SyntaxSpan;
 use crate::text_diff::{compute_diff, context_view, hunk_positions, DiffLine};
 
@@ -30,6 +30,14 @@ pub enum AppMode {
     ProjectBrowser,
     Search,
     Help,
+}
+
+/// Which input box has keyboard focus in Search mode.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SearchFocus {
+    Query,
+    Include,
+    Exclude,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -124,6 +132,9 @@ pub struct App {
 
     // ---- search
     pub search_input: TextInput,
+    pub search_include: TextInput,     // "files to include" glob patterns (comma-separated)
+    pub search_exclude: TextInput,     // "files to exclude" glob patterns (comma-separated)
+    pub search_focus: SearchFocus,     // which input box has keyboard focus
     pub search_query: SearchQuery,
     pub search_grep_mode: bool,        // true = plain grep, false = ts-query/shorthand
     pub search_results: Vec<SearchResult>,
@@ -206,6 +217,9 @@ impl App {
             project_filter: TextInput::new(),
             project_filter_active: false,
             search_input: TextInput::new(),
+            search_include: TextInput::new(),
+            search_exclude: TextInput::new(),
+            search_focus: SearchFocus::Query,
             search_query: parse_query(""),
             search_grep_mode: false,
             search_results: vec![],
@@ -276,6 +290,9 @@ impl App {
             project_filter: TextInput::new(),
             project_filter_active: false,
             search_input: TextInput::new(),
+            search_include: TextInput::new(),
+            search_exclude: TextInput::new(),
+            search_focus: SearchFocus::Query,
             search_query: parse_query(""),
             search_grep_mode: false,
             search_results: vec![],
@@ -345,6 +362,9 @@ impl App {
             project_filter: TextInput::new(),
             project_filter_active: false,
             search_input: TextInput::new(),
+            search_include: TextInput::new(),
+            search_exclude: TextInput::new(),
+            search_focus: SearchFocus::Query,
             search_query: parse_query(""),
             search_grep_mode: false,
             search_results: vec![],
@@ -1248,68 +1268,57 @@ impl App {
     // ── Search mode ───────────────────────────────────────────────────────
 
     fn on_search(&mut self, key: KeyEvent) {
+        // Global keys that work regardless of which input has focus.
         match key.code {
-            // ── Input editing
-            KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
-                self.search_input.push(c);
-            }
-            KeyCode::Backspace => {
-                self.search_input.backspace();
-            }
-            KeyCode::Delete => {
-                self.search_input.delete_forward();
-            }
-            KeyCode::Left => {
-                self.search_input.move_left();
-            }
-            KeyCode::Right => {
-                self.search_input.move_right();
-            }
-            KeyCode::Home => {
-                self.search_input.move_home();
-            }
-            KeyCode::End => {
-                self.search_input.move_end();
-            }
-            KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => {
-                self.search_input.move_home();
-            }
-            KeyCode::Char('e') if key.modifiers == KeyModifiers::CONTROL => {
-                self.search_input.move_end();
-            }
-            KeyCode::Char('k') if key.modifiers == KeyModifiers::CONTROL => {
-                self.search_input.kill_to_end();
-            }
+            // ── Run search (any focus)
+            KeyCode::Enter => { self.run_search(); return; }
 
-            // ── Run search
-            KeyCode::Enter => {
-                self.run_search();
-            }
-
-            // ── Navigate results
-            KeyCode::Up => {
+            // ── Navigate results (only when query box has focus)
+            KeyCode::Up if self.search_focus == SearchFocus::Query => {
                 if self.search_selected > 0 {
                     self.search_selected -= 1;
                     self.load_search_result(self.search_selected);
                 }
+                return;
             }
-            KeyCode::Down => {
+            KeyCode::Down if self.search_focus == SearchFocus::Query => {
                 if self.search_selected + 1 < self.search_results.len() {
                     self.search_selected += 1;
                     self.load_search_result(self.search_selected);
                 }
+                return;
             }
-            KeyCode::PageUp => {
+            KeyCode::PageUp if self.search_focus == SearchFocus::Query => {
                 self.search_selected = self.search_selected.saturating_sub(10);
                 self.load_search_result(self.search_selected);
+                return;
             }
-            KeyCode::PageDown => {
+            KeyCode::PageDown if self.search_focus == SearchFocus::Query => {
                 let n = self.search_results.len();
                 self.search_selected = (self.search_selected + 10).min(n.saturating_sub(1));
                 self.load_search_result(self.search_selected);
+                return;
             }
 
-            // ── Open result in external editor (Ctrl+o) — must come before the plain 'o' arm
+            // ── Tab / Shift+Tab: cycle focus between Query → Include → Exclude
+            KeyCode::Tab => {
+                self.search_focus = match self.search_focus {
+                    SearchFocus::Query   => SearchFocus::Include,
+                    SearchFocus::Include => SearchFocus::Exclude,
+                    SearchFocus::Exclude => SearchFocus::Query,
+                };
+                return;
+            }
+            KeyCode::BackTab => {
+                self.search_focus = match self.search_focus {
+                    SearchFocus::Query   => SearchFocus::Exclude,
+                    SearchFocus::Include => SearchFocus::Query,
+                    SearchFocus::Exclude => SearchFocus::Include,
+                };
+                return;
+            }
+
+            // ── Open result in external editor (Ctrl+o)
             KeyCode::Char('o') if key.modifiers == KeyModifiers::CONTROL => {
                 if let Some(result) = self.search_results.get(self.search_selected) {
                     self.pending_open =
@@ -1319,15 +1328,42 @@ impl App {
                         result.short_path(), result.line + 1, self.config.open_in.label()
                     );
                 }
+                return;
             }
 
-            // ── Back
+            // ── Back — always returns to previous mode
             KeyCode::Esc => {
                 log::debug!("mode: Search → {:?}", self.search_prev_mode);
                 self.mode = self.search_prev_mode.clone();
+                self.search_focus = SearchFocus::Query;
                 self.status_msg = String::from(" j/k:navigate  Enter:open  s:search  q:quit ");
+                return;
             }
 
+            _ => {}
+        }
+
+        // Route text-editing keys to the focused input.
+        let input = match self.search_focus {
+            SearchFocus::Query   => &mut self.search_input,
+            SearchFocus::Include => &mut self.search_include,
+            SearchFocus::Exclude => &mut self.search_exclude,
+        };
+
+        match key.code {
+            KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE
+                             || key.modifiers == KeyModifiers::SHIFT => {
+                input.push(c);
+            }
+            KeyCode::Backspace                                         => { input.backspace(); }
+            KeyCode::Delete                                            => { input.delete_forward(); }
+            KeyCode::Left                                              => { input.move_left(); }
+            KeyCode::Right                                             => { input.move_right(); }
+            KeyCode::Home                                              => { input.move_home(); }
+            KeyCode::End                                               => { input.move_end(); }
+            KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => { input.move_home(); }
+            KeyCode::Char('e') if key.modifiers == KeyModifiers::CONTROL => { input.move_end(); }
+            KeyCode::Char('k') if key.modifiers == KeyModifiers::CONTROL => { input.kill_to_end(); }
             _ => {}
         }
     }
@@ -1353,11 +1389,33 @@ impl App {
             parse_query(&raw)
         };
 
+        // Apply include / exclude path filters (VS Code-style glob patterns).
+        let include = FileFilter::parse(self.search_include.as_str());
+        let exclude = FileFilter::parse(self.search_exclude.as_str());
+        let project_root = self.left_path.trim_end_matches('/').to_string();
+
         let file_paths: Vec<String> = self
             .project_files
             .iter()
             .map(|tu| tu.file_path.clone())
+            .filter(|path| {
+                // Match against the relative path inside the project root so that
+                // patterns like `src/**` work without requiring the full absolute path.
+                let rel = path
+                    .strip_prefix(&format!("{}/", project_root))
+                    .or_else(|| path.strip_prefix(&project_root))
+                    .unwrap_or(path.as_str());
+                let pass_include = include.is_empty() || include.matches(rel) || include.matches(path);
+                let pass_exclude = exclude.is_empty() || (!exclude.matches(rel) && !exclude.matches(path));
+                pass_include && pass_exclude
+            })
             .collect();
+
+        log::info!(
+            "run_search: {}/{} files after include={:?} exclude={:?}",
+            file_paths.len(), self.project_files.len(),
+            self.search_include.as_str(), self.search_exclude.as_str()
+        );
 
         let results = search_project(&file_paths, &self.search_query);
         let n = results.len();
