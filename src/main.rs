@@ -68,17 +68,25 @@ fn main() -> Result<()> {
         App::new_single(content, cli.left.clone(), cfg.clone())
     };
 
-    log::debug!("initialising terminal (raw mode + alternate screen)");
+    log::debug!("initialising terminal (raw mode + alternate screen + mouse)");
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture
+    )?;
 
     let hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
         log::error!("PANIC: {}", info);
         log::logger().flush();
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            crossterm::event::DisableMouseCapture,
+            LeaveAlternateScreen
+        );
         hook(info);
     }));
 
@@ -91,7 +99,11 @@ fn main() -> Result<()> {
         terminal.draw(|f| ui::render(f, &mut app, height))?;
 
         if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
+            match event::read()? {
+                Event::Mouse(mouse) => {
+                    app.handle_mouse(mouse);
+                }
+                Event::Key(key) => {
                 if key.code == KeyCode::Char('q') && key.modifiers == KeyModifiers::NONE {
                     break;
                 }
@@ -124,7 +136,9 @@ fn main() -> Result<()> {
                         }
                     }
                 }
-            }
+                } // end Event::Key arm
+                _ => {}
+            } // end match event::read()
         }
 
         if app.should_quit {
@@ -134,7 +148,11 @@ fn main() -> Result<()> {
 
     log::debug!("restoring terminal");
     disable_raw_mode()?;
-    execute!(io::stdout(), LeaveAlternateScreen)?;
+    execute!(
+        io::stdout(),
+        crossterm::event::DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     log::info!("astdiff exiting cleanly");
 
     Ok(())

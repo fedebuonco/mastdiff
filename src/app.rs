@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 use std::fs;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
 
 use crate::ast_diff::{
     compute_ast_diff, filter_rows, parse_single, row_has_children, visible_rows,
@@ -13,6 +14,10 @@ use crate::input::TextInput;
 use crate::project::TranslationUnit;
 use crate::search::{parse_query, search_project, SearchQuery, SearchResult};
 use crate::text_diff::{compute_diff, context_view, hunk_positions, DiffLine};
+
+/// Display rows consumed by each search result in the results list.
+/// Used by both the renderer and the mouse click handler.
+pub const ROWS_PER_RESULT: usize = 2;
 
 // ── Modes & enums ─────────────────────────────────────────────────────────
 
@@ -139,6 +144,11 @@ pub struct App {
     /// Set to Some(file, line, col) when the user presses Ctrl+o.
     /// The main event loop drains this and opens the file in the configured editor.
     pub pending_open: Option<(String, usize, usize)>,
+
+    // ---- mouse hit-test areas (updated each frame by the search view renderer)
+    pub search_results_area: Rect,
+    pub search_source_area:  Rect,
+    pub search_ast_area:     Rect,
 }
 
 impl App {
@@ -206,6 +216,9 @@ impl App {
             status_msg: Self::text_diff_hint(false),
             config,
             pending_open: None,
+            search_results_area: Rect::default(),
+            search_source_area:  Rect::default(),
+            search_ast_area:     Rect::default(),
         }
     }
 
@@ -273,6 +286,9 @@ impl App {
             ),
             config,
             pending_open: None,
+            search_results_area: Rect::default(),
+            search_source_area:  Rect::default(),
+            search_ast_area:     Rect::default(),
         }
     }
 
@@ -337,6 +353,9 @@ impl App {
             ),
             config,
             pending_open: None,
+            search_results_area: Rect::default(),
+            search_source_area:  Rect::default(),
+            search_ast_area:     Rect::default(),
         }
     }
 
@@ -984,6 +1003,66 @@ impl App {
         }
     }
 
+    // ── Mouse handling ────────────────────────────────────────────────────
+
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        match self.mode {
+            AppMode::Search => self.on_search_mouse(mouse),
+            _ => {}
+        }
+    }
+
+    fn on_search_mouse(&mut self, mouse: MouseEvent) {
+        let (col, row) = (mouse.column, mouse.row);
+        match mouse.kind {
+            // ── Scroll ────────────────────────────────────────────────────
+            MouseEventKind::ScrollUp => {
+                if rect_hit(self.search_source_area, col, row) {
+                    self.search_source_scroll = self.search_source_scroll.saturating_sub(3);
+                } else if rect_hit(self.search_ast_area, col, row) {
+                    self.search_ast_scroll = self.search_ast_scroll.saturating_sub(3);
+                } else if rect_hit(self.search_results_area, col, row) {
+                    if self.search_scroll > 0 {
+                        self.search_scroll -= 1;
+                    }
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                let n = self.search_results.len();
+                if rect_hit(self.search_source_area, col, row) {
+                    let max = self.search_source_lines.len().saturating_sub(1);
+                    self.search_source_scroll = (self.search_source_scroll + 3).min(max);
+                } else if rect_hit(self.search_ast_area, col, row) {
+                    let max = self.search_ast_nodes.len().saturating_sub(1);
+                    self.search_ast_scroll = (self.search_ast_scroll + 3).min(max);
+                } else if rect_hit(self.search_results_area, col, row) {
+                    if n > 0 {
+                        self.search_scroll = (self.search_scroll + 1).min(n.saturating_sub(1));
+                    }
+                }
+            }
+            // ── Click: select result ──────────────────────────────────────
+            MouseEventKind::Down(MouseButton::Left) => {
+                if rect_hit(self.search_results_area, col, row) && !self.search_results.is_empty()
+                {
+                    // Inner area of the block (subtract 1-pixel border all around)
+                    let inner_y = self.search_results_area.y + 1;
+                    if row >= inner_y {
+                        let row_in_pane = (row - inner_y) as usize;
+                        // Each result occupies ROWS_PER_RESULT display lines
+                        let idx = self.search_scroll + row_in_pane / ROWS_PER_RESULT;
+                        if idx < self.search_results.len() {
+                            log::debug!("mouse click: result #{}", idx);
+                            self.search_selected = idx;
+                            self.load_search_result(idx);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn text_diff_hint(ignore_ws: bool) -> String {
         format!(
             " q:quit  s/e:select  Enter:AST  n/N:hunk  u:unified  c:context  w:ws({})  i:inline  x:patch  X:html ",
@@ -1309,4 +1388,16 @@ impl App {
         self.search_ast_scroll = highlight.saturating_sub(5);
     }
 
+}
+
+// ── Free helpers ─────────────────────────────────────────────────────────
+
+/// Returns true if `(col, row)` is inside `area` (inclusive of border).
+fn rect_hit(area: Rect, col: u16, row: u16) -> bool {
+    area.width > 0
+        && area.height > 0
+        && col >= area.x
+        && col < area.x + area.width
+        && row >= area.y
+        && row < area.y + area.height
 }
