@@ -90,7 +90,7 @@ pub fn to_html(
     writeln!(buf, "<html><head><meta charset='utf-8'>")?;
     writeln!(
         buf,
-        "<title>astdiff: {} vs {}</title>",
+        "<title>mastdiff: {} vs {}</title>",
         esc(left_path),
         esc(right_path)
     )?;
@@ -111,7 +111,7 @@ th{{background:#181825;color:#585b70;font-weight:normal;border-bottom:1px solid 
     )?;
     writeln!(
         buf,
-        "<h1>astdiff — {} vs {}</h1>",
+        "<h1>mastdiff — {} vs {}</h1>",
         esc(left_path),
         esc(right_path)
     )?;

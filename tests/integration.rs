@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
-use astdiff::project;
-use astdiff::search::{parse_query, search_project, SearchResult};
+use mastdiff::project;
+use mastdiff::search::{parse_query, search_project, SearchResult};
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ fn project_files_all_exist() {
 fn project_files_are_cpp_sources() {
     for path in load_files() {
         assert!(
-            astdiff::project::is_cpp_source(&path),
+            mastdiff::project::is_cpp_source(&path),
             "non-cpp file in project: {path}"
         );
     }

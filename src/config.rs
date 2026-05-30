@@ -1,4 +1,4 @@
-//! User configuration loaded from `~/.config/astdiff/config.toml`.
+//! User configuration loaded from `~/.config/mastdiff/config.toml`.
 //!
 //! Minimal example config:
 //! ```toml
@@ -86,7 +86,7 @@ pub struct Config {
     #[serde(default)]
     pub open_in: OpenIn,
 
-    /// Minimum log level written to `astdiff.log`.
+    /// Minimum log level written to `mastdiff.log`.
     /// One of: off, error, warn, info, debug, trace  (default: info)
     #[serde(default)]
     pub log_level: LogLevel,
@@ -102,7 +102,7 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Load from `~/.config/astdiff/config.toml` (XDG-aware).
+    /// Load from `~/.config/mastdiff/config.toml` (XDG-aware).
     /// Falls back to [`Config::default`] on any error.
     pub fn load() -> Self {
         let path = Self::path();
@@ -130,8 +130,8 @@ impl Config {
         }
     }
 
-    /// Canonical path: `$XDG_CONFIG_HOME/astdiff/config.toml`
-    /// or `~/.config/astdiff/config.toml` if XDG is unset.
+    /// Canonical path: `$XDG_CONFIG_HOME/mastdiff/config.toml`
+    /// or `~/.config/mastdiff/config.toml` if XDG is unset.
     pub fn path() -> PathBuf {
         let base = std::env::var("XDG_CONFIG_HOME")
             .map(PathBuf::from)
@@ -140,7 +140,7 @@ impl Config {
                     .map(|h| PathBuf::from(h).join(".config"))
                     .unwrap_or_else(|_| PathBuf::from("."))
             });
-        base.join("astdiff").join("config.toml")
+        base.join("mastdiff").join("config.toml")
     }
 }
 
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn config_path_ends_with_expected_suffix() {
         let p = Config::path();
-        assert!(p.ends_with("astdiff/config.toml"));
+        assert!(p.ends_with("mastdiff/config.toml"));
     }
 
     #[test]

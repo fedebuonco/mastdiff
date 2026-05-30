@@ -1,13 +1,15 @@
-# astdiff
+# mastdiff
 
 A terminal UI for exploring and diffing C++ codebases using tree-sitter.
 
 Combines three tools in one keyboard-driven interface: a **side-by-side text diff**, a **live AST diff**, and a **structural code search** powered by native tree-sitter queries — all without leaving the terminal.
 
+![mastdiff screenshot](assets/mastdiff.png)
+
 ```
-astdiff src/audio.cpp src/audio_v2.cpp   # diff two files
-astdiff src/engine.cpp                   # browse a single file's AST
-astdiff ./my_project/                    # browse a whole C++ project
+mastdiff src/audio.cpp src/audio_v2.cpp   # diff two files
+mastdiff src/engine.cpp                   # browse a single file's AST
+mastdiff ./my_project/                    # browse a whole C++ project
 ```
 
 ---
@@ -29,10 +31,17 @@ Select any line range in the text diff, press `Enter`, and see a **structured AS
 Open any `.cpp` file and explore its full AST in a split view: source lines on the left, tree nodes on the right. Select a line range and press `Enter` to zoom the AST to that slice.
 
 ### Project browser
-Point astdiff at a directory or at a build with `compile_commands.json` and it will discover all C++ translation units (`.cpp` / `.cc` / `.cxx` / `.C`). Filter files by name, then open any file directly into the AST browser.
+Point mastdiff at a directory or at a build with `compile_commands.json` and it will discover all C++ translation units. Switch between views with `1`–`4`:
+
+- **TUs** — source files with expandable associated headers (static `#include` analysis)
+- **Sources** — flat list of `.cpp`/`.cc`/`.cxx` files
+- **Headers** — flat list of `.h`/`.hpp`/`.hxx` files with back-reference count
+- **CMake** — targets parsed from `CMakeLists.txt` with expandable source lists
 
 ```
 j / k          navigate files
+1/2/3/4        switch view (TUs / Sources / Headers / CMake)
+Space          expand / collapse TU or CMake target
 s              filter file list by name
 Enter          open file in AST browser
 g              open grep search
@@ -43,7 +52,7 @@ q              quit
 
 ### Structural code search
 
-Search the entire project with shorthand queries or raw tree-sitter S-expressions.
+Search the entire project with shorthand queries or raw tree-sitter S-expressions. The query bar **highlights recognised prefixes** in distinct colours so you know the keyword was parsed.
 
 | Query | Finds |
 |---|---|
@@ -61,11 +70,13 @@ Search the entire project with shorthand queries or raw tree-sitter S-expression
 | `AudioBus` | plain-text grep (case-insensitive) across all files |
 | `(call_expression function: (identifier) @fn)` | raw tree-sitter query |
 
-Results show the filename, line number, `@capture_name`, and a source snippet. Navigate with `↑` / `↓`; press `Ctrl+o` to open the file at that exact line in your configured editor.
+Press **`Alt+R`** to toggle regex mode — the `[.*]` badge in the title bar turns orange when active. In regex mode the filter part of shorthand queries (`fn:upd.*`) and the full grep pattern are treated as regular expressions.
 
-**`call:` filtering** — nested calls inside argument lists are excluded automatically. In `applyForce(gravity * body->mass())`, searching `call:mass` will only match a standalone `body->mass()`, not the nested invocation.
+Results show filename, line number, `@capture_name`, and a source snippet. Navigate with `↑` / `↓`; press `Ctrl+o` to open the file at that exact line in your configured editor.
 
-**Raw tree-sitter queries** — any input starting with `(` or `[` is forwarded directly to tree-sitter's query engine. Use any valid tree-sitter-cpp S-expression with at least one `@capture`.
+**VS Code-style file filters** — Tab through the include / exclude boxes below the query bar to restrict results by glob pattern (`src/**`, `*.cpp`, `tests/**`).
+
+**Source text selection** — drag the mouse in the source pane to select text; it is copied to the clipboard automatically on release. `Ctrl+C` copies the current selection; `Ctrl+Y` copies the highlighted AST node's info.
 
 ### External editor integration
 
@@ -82,26 +93,39 @@ Press `Ctrl+o` in any view to open the current file at the current line in your 
 
 ## Installation
 
-Requires Rust 1.85+ and a C++ tree-sitter grammar.
+### Pre-built binaries
+
+Download the latest release binary for your platform from the [Releases](../../releases) page — no dependencies required.
+
+| Platform | File |
+|---|---|
+| Linux x86_64 (static musl) | `mastdiff-linux-x86_64` |
+| macOS arm64 (Apple Silicon) | `mastdiff-macos-aarch64` |
+| macOS x86_64 (Intel) | `mastdiff-macos-x86_64` |
+| Windows x86_64 | `mastdiff-windows-x86_64.exe` |
+
+### Build from source
+
+Requires Rust 1.85+.
 
 ```bash
-git clone https://github.com/yourname/astdiff
-cd astdiff
+git clone https://github.com/yourname/mastdiff
+cd mastdiff
 cargo build --release
-# binary at target/release/astdiff
+# binary at target/release/mastdiff
 ```
 
 ---
 
 ## Configuration
 
-Create `~/.config/astdiff/config.toml` (XDG-aware; falls back to `~/.config` if `$XDG_CONFIG_HOME` is unset):
+Create `~/.config/mastdiff/config.toml` (XDG-aware; falls back to `~/.config` if `$XDG_CONFIG_HOME` is unset):
 
 ```toml
 # Which editor Ctrl+o opens files in
 open_in = "vim"      # "vim" (default) | "vscode"
 
-# Minimum log level written to astdiff.log in the working directory
+# Minimum log level written to mastdiff.log in the working directory
 log_level = "info"   # "off" | "error" | "warn" | "info" | "debug" | "trace"
 ```
 
@@ -142,16 +166,22 @@ Both settings are optional; the file itself is optional.
 | Key | Action |
 |---|---|
 | type | edit query in search bar |
+| `Tab` / `Shift+Tab` | cycle focus: query → include filter → exclude filter |
 | `Enter` | run search |
 | `↑` / `↓` | navigate results (shows live source + AST preview) |
+| `Alt+R` | toggle regex mode |
+| `drag` (mouse) | select text in source pane (auto-copies on release) |
+| `Ctrl+C` | copy source selection to clipboard |
+| `Ctrl+Y` | copy highlighted AST node to clipboard |
 | `Ctrl+o` | open result in external editor |
+| `?` | open keyboard reference |
 | `Esc` | back |
 
 ---
 
 ## Logging
 
-astdiff writes structured logs to `astdiff.log` in the working directory.
+mastdiff writes structured logs to `mastdiff.log` in the working directory.
 
 ```
 [     0.001s] [INFO ] config               config loaded: open_in=vscode log_level=debug
@@ -171,33 +201,35 @@ Set `log_level = "trace"` to see every keystroke and nested-call filter decision
 
 ```
 src/
-  main.rs          entry point, CLI, event loop, external editor handoff
-  app.rs           all application state and key-event handlers
-  config.rs        Config struct (open_in, log_level), loaded from TOML
-  logger.rs        custom file logger with elapsed timestamps
-  search.rs        tree-sitter query engine + grep, SearchResult
-  project.rs       project loader (compile_commands.json or directory walk)
-  ast_diff.rs      tree-sitter parse, flatten, diff, collapse/filter helpers
-  text_diff.rs     line-level and character-level diff (similar crate)
-  input.rs         single-line text field with byte-accurate cursor
-  export.rs        .patch and .html export
+  main.rs           entry point, CLI, event loop, external editor handoff
+  app.rs            all application state and key-event handlers
+  config.rs         Config struct (open_in, log_level), loaded from TOML
+  logger.rs         custom file logger with elapsed timestamps
+  search.rs         tree-sitter query engine + grep + regex, SearchResult
+  project.rs        project loader (compile_commands.json or directory walk)
+  ast_diff.rs       tree-sitter parse, flatten, diff, collapse/filter helpers
+  text_diff.rs      line-level and character-level diff (similar crate)
+  syntax.rs         tree-sitter syntax highlighting for the source pane
+  input.rs          single-line text field with byte-accurate cursor
+  export.rs         .patch and .html export
   ui/
-    diff_view.rs   text diff renderer
-    ast_view.rs    AST diff renderer
-    single_view.rs single-file AST browser renderer
-    project_view.rs project browser renderer
-    search_view.rs search overlay renderer
+    diff_view.rs    text diff renderer
+    ast_view.rs     AST diff renderer
+    single_view.rs  single-file AST browser renderer
+    project_view.rs project browser renderer (TUs / Sources / Headers / CMake)
+    search_view.rs  search overlay renderer
+    help_view.rs    keyboard reference overlay
 examples/
-  sample_project/  five-file C++ game engine used by integration tests
+  sample_project/   five-file C++ game engine used by integration tests
 tests/
-  integration.rs   23 integration tests against the sample project
+  integration.rs    23 integration tests against the sample project
 ```
 
 ---
 
 ## How tree-sitter search works
 
-Each query is compiled once with `tree_sitter::Query::new()` and run with `QueryCursor::captures()`. The shorthand prefixes (`fn:`, `call:`, etc.) expand to pre-written S-expression queries with a `@match` capture; the text after the colon is used as a substring filter applied only to the captured node's text, not the whole line.
+Each query is compiled once with `tree_sitter::Query::new()` and run with `QueryCursor::captures()`. The shorthand prefixes (`fn:`, `call:`, etc.) expand to pre-written S-expression queries with a `@match` capture; the text after the colon is used as a substring filter (or regex when `Alt+R` is active) applied only to the captured node's text, not the whole line.
 
 All files are searched in parallel with Rayon. Results are deduplicated by byte offset (so multiple overlapping patterns in one query never double-count the same node) and sorted by file path then line number.
 

@@ -1,6 +1,6 @@
 //! File-based logger for the `log` crate.
 //!
-//! Appends structured log lines to `astdiff.log` in the working directory.
+//! Appends structured log lines to `mastdiff.log` in the working directory.
 //! Each line includes an elapsed timestamp, level, shortened module name,
 //! and — when available — the source file and line number of the call site
 //! (learned from ripgrep's logger which includes this for easy debugging).

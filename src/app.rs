@@ -655,7 +655,7 @@ impl App {
 
             // ── Export
             KeyCode::Char('x') => {
-                let path = "astdiff_output.patch";
+                let path = "mastdiff_output.patch";
                 match export::to_patch(
                     &self.diff_lines,
                     &self.left_path,
@@ -668,7 +668,7 @@ impl App {
                 }
             }
             KeyCode::Char('X') => {
-                let path = "astdiff_output.html";
+                let path = "mastdiff_output.html";
                 match export::to_html(
                     &self.diff_lines,
                     &self.left_path,

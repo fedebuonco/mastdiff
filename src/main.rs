@@ -24,7 +24,7 @@ use app::App;
 use config::OpenIn;
 
 #[derive(Parser)]
-#[command(name = "astdiff", about = "C++ diff visualizer with AST + project search")]
+#[command(name = "mastdiff", about = "C++ diff visualizer with AST + project search")]
 struct Cli {
     /// Path to a C++ file, a second file to diff against, or a project directory
     left: String,
@@ -36,9 +36,9 @@ fn main() -> Result<()> {
 
     // Load config first so we know the desired log level before logging anything.
     let cfg = config::Config::load();
-    let _ = logger::init("astdiff.log", cfg.log_level.to_level_filter());
+    let _ = logger::init("mastdiff.log", cfg.log_level.to_level_filter());
     log::info!(
-        "astdiff starting — editor={} log_level={}",
+        "mastdiff starting — editor={} log_level={}",
         cfg.open_in.label(),
         cfg.log_level.label()
     );
@@ -155,7 +155,7 @@ fn main() -> Result<()> {
         crossterm::event::DisableMouseCapture,
         LeaveAlternateScreen
     )?;
-    log::info!("astdiff exiting cleanly");
+    log::info!("mastdiff exiting cleanly");
 
     Ok(())
 }

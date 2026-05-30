@@ -20,7 +20,7 @@ pub fn render(f: &mut Frame, _app: &App, area: Rect) {
         .border_style(Style::default().fg(Color::Rgb(100, 140, 220)))
         .title(Line::from(vec![
             Span::styled(
-                " astdiff — keyboard reference ",
+                " mastdiff — keyboard reference ",
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::Rgb(100, 140, 220))
@@ -122,7 +122,7 @@ fn right_column() -> Vec<Line<'static>> {
     row(&mut lines, "q",              "quit the application");
     blank(&mut lines);
 
-    section(&mut lines, "CONFIG  (~/.config/astdiff/config.toml)");
+    section(&mut lines, "CONFIG  (~/.config/mastdiff/config.toml)");
     row(&mut lines, "open_in",        "\"vim\" or \"vscode\"");
     row(&mut lines, "log_level",      "\"off\" | \"error\" | \"warn\" | \"info\" | \"debug\" | \"trace\"");
 
