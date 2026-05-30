@@ -519,6 +519,18 @@ fn grep(file_path: &str, src: &str, text: &str, use_regex: bool) -> Vec<SearchRe
         .collect()
 }
 
+fn make_snippet(line: &str, col: usize) -> String {
+    // col is a byte offset from tree-sitter; convert to char count safely.
+    let col_char = line[..col.min(line.len())].chars().count();
+    let start_char = col_char.saturating_sub(4);
+    line.chars()
+        .skip(start_char)
+        .take(48)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -877,20 +889,4 @@ void bootstrap() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-/// Extract a short display snippet from a source line.
-///
-/// Starts a few characters before `col` so the match is visible in context.
-/// Learned from ripgrep: always work in char indices rather than byte offsets
-/// when building display strings, and never slice a `&str` at a raw byte
-/// position that may land inside a multi-byte codepoint.
-fn make_snippet(line: &str, col: usize) -> String {
-    // col is a byte offset from tree-sitter; convert to char count safely.
-    let col_char = line[..col.min(line.len())].chars().count();
-    let start_char = col_char.saturating_sub(4);
-    line.chars()
-        .skip(start_char)
-        .take(48)
-        .collect::<String>()
-        .trim_end()
-        .to_string()
-}
+

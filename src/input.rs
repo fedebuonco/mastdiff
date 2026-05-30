@@ -82,6 +82,14 @@ impl TextInput {
     }
 }
 
+fn prev_char_boundary(s: &str, mut pos: usize) -> usize {
+    pos -= 1;
+    while !s.is_char_boundary(pos) {
+        pos -= 1;
+    }
+    pos
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,10 +268,4 @@ mod tests {
     }
 }
 
-fn prev_char_boundary(s: &str, mut pos: usize) -> usize {
-    pos -= 1;
-    while !s.is_char_boundary(pos) {
-        pos -= 1;
-    }
-    pos
-}
+

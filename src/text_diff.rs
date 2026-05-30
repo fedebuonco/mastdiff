@@ -182,8 +182,8 @@ pub fn context_view(diff_lines: &[DiffLine], ctx: usize) -> Vec<usize> {
         if dl.left_status != DiffStatus::Equal || dl.right_status != DiffStatus::Equal {
             let s = i.saturating_sub(ctx);
             let e = (i + ctx + 1).min(n);
-            for j in s..e {
-                vis[j] = true;
+            for item in vis.iter_mut().take(e).skip(s) {
+                *item = true;
             }
         }
     }
@@ -192,6 +192,13 @@ pub fn context_view(diff_lines: &[DiffLine], ctx: usize) -> Vec<usize> {
         .filter(|(_, v)| **v)
         .map(|(i, _)| i)
         .collect()
+}
+
+fn normalize_ws(s: &str) -> String {
+    s.lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -346,9 +353,4 @@ mod tests {
     }
 }
 
-fn normalize_ws(s: &str) -> String {
-    s.lines()
-        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+

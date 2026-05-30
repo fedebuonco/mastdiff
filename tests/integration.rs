@@ -22,7 +22,7 @@ fn short(r: &SearchResult) -> &str {
     r.short_path()
 }
 
-fn files_in_results<'a>(results: &'a [SearchResult]) -> Vec<&'a str> {
+fn files_in_results(results: &[SearchResult]) -> Vec<&str> {
     let mut names: Vec<&str> = results.iter().map(short).collect();
     names.dedup();
     names

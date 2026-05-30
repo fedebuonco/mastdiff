@@ -24,8 +24,8 @@ pub fn to_patch(
         if dl.left_status != DiffStatus::Equal || dl.right_status != DiffStatus::Equal {
             let s = i.saturating_sub(context);
             let e = (i + context + 1).min(n);
-            for j in s..e {
-                in_range[j] = true;
+            for item in in_range.iter_mut().take(e).skip(s) {
+                *item = true;
             }
         }
     }

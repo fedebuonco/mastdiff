@@ -1145,10 +1145,8 @@ impl App {
                     self.search_source_scroll = self.search_source_scroll.saturating_sub(3);
                 } else if rect_hit(self.search_ast_area, col, row) {
                     self.search_ast_scroll = self.search_ast_scroll.saturating_sub(3);
-                } else if rect_hit(self.search_results_area, col, row) {
-                    if self.search_scroll > 0 {
-                        self.search_scroll -= 1;
-                    }
+                } else if rect_hit(self.search_results_area, col, row) && self.search_scroll > 0 {
+                    self.search_scroll -= 1;
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -1159,10 +1157,8 @@ impl App {
                 } else if rect_hit(self.search_ast_area, col, row) {
                     let max = self.search_ast_nodes.len().saturating_sub(1);
                     self.search_ast_scroll = (self.search_ast_scroll + 3).min(max);
-                } else if rect_hit(self.search_results_area, col, row) {
-                    if n > 0 {
-                        self.search_scroll = (self.search_scroll + 1).min(n.saturating_sub(1));
-                    }
+                } else if rect_hit(self.search_results_area, col, row) && n > 0 {
+                    self.search_scroll = (self.search_scroll + 1).min(n.saturating_sub(1));
                 }
             }
             // ── Mouse down: start selection in source pane, click in results ─
@@ -1207,7 +1203,7 @@ impl App {
                     self.search_sel = Some((start, end));
                     self.search_sel_anchor = None;
                     // Auto-copy if we have a non-empty selection
-                    if self.search_sel.map_or(false, |(s, e)| s != e) {
+                    if self.search_sel.is_some_and(|(s, e)| s != e) {
                         self.copy_source_selection();
                     }
                 }

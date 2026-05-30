@@ -139,6 +139,7 @@ fn render_side_by_side(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(right_lines), ir);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_inline_line(
     lno: &str,
     prefix: &str,
@@ -210,8 +211,8 @@ fn build_unified_lines(diff_lines: &[DiffLine], ctx: usize) -> Vec<(String, Styl
         if dl.left_status != DiffStatus::Equal || dl.right_status != DiffStatus::Equal {
             let s = i.saturating_sub(ctx);
             let e = (i + ctx + 1).min(n);
-            for j in s..e {
-                in_range[j] = true;
+            for item in in_range.iter_mut().take(e).skip(s) {
+                *item = true;
             }
         }
     }

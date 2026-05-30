@@ -315,6 +315,17 @@ pub fn filter_rows(nodes: &[AstLine], filter: &str) -> Vec<usize> {
         .collect()
 }
 
+// ── Internal ──────────────────────────────────────────────────────────────
+
+fn make_parser() -> Result<Parser> {
+    let mut parser = Parser::new();
+    let language = tree_sitter_cpp::language();
+    parser
+        .set_language(&language)
+        .context("Failed to set C++ language")?;
+    Ok(parser)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,13 +476,4 @@ class Foo {
     }
 }
 
-// ── Internal ──────────────────────────────────────────────────────────────
 
-fn make_parser() -> Result<Parser> {
-    let mut parser = Parser::new();
-    let language = tree_sitter_cpp::language();
-    parser
-        .set_language(&language)
-        .context("Failed to set C++ language")?;
-    Ok(parser)
-}

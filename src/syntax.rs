@@ -85,7 +85,7 @@ fn emit_span(
     start_byte: usize,
     end_byte: usize,
     color: Color,
-    out: &mut Vec<Vec<SyntaxSpan>>,
+    out: &mut [Vec<SyntaxSpan>],
 ) {
     // Binary-search for the first line containing start_byte.
     let first_line = line_starts.partition_point(|&ls| ls <= start_byte).saturating_sub(1);

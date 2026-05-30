@@ -80,7 +80,7 @@ impl OpenIn {
 
 // ── Config ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
     /// Which external editor to open files in when the user presses Ctrl+o.
     #[serde(default)]
@@ -90,15 +90,6 @@ pub struct Config {
     /// One of: off, error, warn, info, debug, trace  (default: info)
     #[serde(default)]
     pub log_level: LogLevel,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            open_in: OpenIn::default(),
-            log_level: LogLevel::default(),
-        }
-    }
 }
 
 impl Config {
