@@ -1,2 +1,4 @@
 /target
 astdiff_output.*
+*.log
+examples/
