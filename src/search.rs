@@ -1,82 +1,131 @@
+use std::collections::HashSet;
 use std::fs;
 
 use rayon::prelude::*;
-use tree_sitter::{Node, Parser};
+use tree_sitter::{Parser, Query, QueryCursor};
+
+// ── Predefined shorthand queries ──────────────────────────────────────────
+// Each query must have exactly one capture group named @match.
+// Multiple top-level patterns are fine — tree-sitter unions them.
+
+const QUERY_FN: &str = "
+(function_definition
+  declarator: (function_declarator
+    declarator: (identifier) @match))
+";
+
+const QUERY_CALL: &str = "
+(call_expression function: (identifier) @match)
+(call_expression function: (field_expression field: (field_identifier) @match))
+";
+
+const QUERY_VAR: &str = "
+(declaration declarator: (identifier) @match)
+(declaration declarator: (init_declarator declarator: (identifier) @match))
+";
+
+const QUERY_CLASS: &str = "
+(class_specifier name: (type_identifier) @match)
+(struct_specifier name: (type_identifier) @match)
+(enum_specifier name: (type_identifier) @match)
+";
+
+const QUERY_TYPE: &str = "(type_identifier) @match";
+
+const QUERY_INCLUDE: &str = "(preproc_include path: _ @match)";
+
+const QUERY_PARAM: &str = "(parameter_declaration declarator: (identifier) @match)";
+
+const QUERY_FIELD: &str = "(field_declaration declarator: (field_identifier) @match)";
 
 // ── Query model ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum QueryFilter {
-    /// Plain text grep — no structural constraint
-    Any,
-    Function,  // fn:
-    Call,      // call:
-    Variable,  // var:
-    Class,     // class:
-    TypeRef,   // type:
-    Include,   // include:
-    Parameter, // param:
-    Field,     // field:
-}
-
-impl QueryFilter {
-    #[allow(dead_code)]
-    pub fn label(&self) -> &str {
-        match self {
-            Self::Any => "text",
-            Self::Function => "fn",
-            Self::Call => "call",
-            Self::Variable => "var",
-            Self::Class => "class",
-            Self::TypeRef => "type",
-            Self::Include => "include",
-            Self::Parameter => "param",
-            Self::Field => "field",
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct SearchQuery {
-    pub text: String,
-    pub filter: QueryFilter,
+    /// Raw text the user typed
+    pub raw: String,
+    /// Tree-sitter S-expression query source (empty in grep mode)
+    pub ts_query_src: String,
+    /// Substring filter applied to the captured node's text (empty = show all)
+    pub capture_filter: String,
+    /// True → ignore ts_query_src and do plain-text grep
+    pub grep_mode: bool,
+    /// True → skip captures whose containing call_expression is inside an argument_list
+    pub filter_nested_calls: bool,
 }
 
 impl SearchQuery {
     pub fn is_empty(&self) -> bool {
-        self.text.is_empty()
+        self.raw.trim().is_empty()
     }
 }
 
+/// Parse user input into a `SearchQuery`.
+///
+/// Rules:
+/// - Starts with `(` or `[`  → raw tree-sitter query, no text filter
+/// - `fn:text`, `call:text`, … → expand to predefined query, filter captures by `text`
+/// - anything else            → plain-text grep
 pub fn parse_query(raw: &str) -> SearchQuery {
-    let prefixes: &[(&str, QueryFilter)] = &[
-        ("fn:", QueryFilter::Function),
-        ("call:", QueryFilter::Call),
-        ("var:", QueryFilter::Variable),
-        ("class:", QueryFilter::Class),
-        ("type:", QueryFilter::TypeRef),
-        ("include:", QueryFilter::Include),
-        ("param:", QueryFilter::Parameter),
-        ("field:", QueryFilter::Field),
+    let trimmed = raw.trim();
+
+    // Raw tree-sitter query
+    if trimmed.starts_with('(') || trimmed.starts_with('[') {
+        return SearchQuery {
+            raw: raw.to_string(),
+            ts_query_src: trimmed.to_string(),
+            capture_filter: String::new(),
+            grep_mode: false,
+            filter_nested_calls: false,
+        };
+    }
+
+    // Shorthand prefixes → predefined queries
+    let shorthands: &[(&str, &str, bool)] = &[
+        ("fn:",      QUERY_FN,      false),
+        ("call:",    QUERY_CALL,    true),  // skip calls nested inside argument lists
+        ("var:",     QUERY_VAR,     false),
+        ("class:",   QUERY_CLASS,   false),
+        ("type:",    QUERY_TYPE,    false),
+        ("include:", QUERY_INCLUDE, false),
+        ("param:",   QUERY_PARAM,   false),
+        ("field:",   QUERY_FIELD,   false),
     ];
-    for (prefix, filter) in prefixes {
-        if let Some(text) = raw.strip_prefix(prefix) {
-            return SearchQuery { text: text.to_string(), filter: filter.clone() };
+    for (prefix, ts_query, filter_nested) in shorthands {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            return SearchQuery {
+                raw: raw.to_string(),
+                ts_query_src: ts_query.to_string(),
+                capture_filter: rest.trim().to_string(),
+                grep_mode: false,
+                filter_nested_calls: *filter_nested,
+            };
         }
     }
-    SearchQuery { text: raw.to_string(), filter: QueryFilter::Any }
+
+    // Plain-text grep
+    SearchQuery {
+        raw: raw.to_string(),
+        ts_query_src: String::new(),
+        capture_filter: String::new(),
+        grep_mode: true,
+        filter_nested_calls: false,
+    }
 }
 
-// ── Result model ─────────────────────────────────────────────────────────
+// ── Result model ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct SearchResult {
     pub file_path: String,
-    pub line: usize,       // 0-indexed line of the match
+    pub line: usize,
     #[allow(dead_code)]
-    pub col: usize,        // 0-indexed column
-    pub snippet: String,   // short context string (~50 chars)
-    pub node_kind: String, // tree-sitter kind of the matching node
+    pub col: usize,
+    pub snippet: String,
+    /// Actual tree-sitter node kind of the captured node (e.g. "identifier")
+    pub node_kind: String,
+    /// Name of the capture in the query (e.g. "match", "name")
+    pub capture_name: String,
 }
 
 impl SearchResult {
@@ -94,13 +143,19 @@ pub fn search_project(files: &[String], query: &SearchQuery) -> Vec<SearchResult
     if query.is_empty() {
         return vec![];
     }
-
+    log::info!(
+        "search: mode={} ts_query={:?} filter={:?} files={}",
+        if query.grep_mode { "grep" } else { "ts-query" },
+        if query.grep_mode { &query.raw } else { &query.ts_query_src },
+        query.capture_filter,
+        files.len(),
+    );
     let mut results: Vec<SearchResult> = files
         .par_iter()
         .flat_map(|f| search_file(f, query))
         .collect();
-
     results.sort_by(|a, b| a.file_path.cmp(&b.file_path).then(a.line.cmp(&b.line)));
+    log::info!("search: {} results", results.len());
     results
 }
 
@@ -114,25 +169,113 @@ pub fn search_file(file_path: &str, query: &SearchQuery) -> Vec<SearchResult> {
 }
 
 pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<SearchResult> {
-    if query.filter == QueryFilter::Any {
-        return grep(file_path, src, &query.text);
+    if query.grep_mode {
+        return grep(file_path, src, &query.raw);
+    }
+    if query.ts_query_src.is_empty() {
+        return vec![];
     }
 
-    let Ok(mut parser) = make_parser() else {
-        return vec![];
+    let lang = tree_sitter_cpp::language();
+
+    let ts_query = match Query::new(&lang, &query.ts_query_src) {
+        Ok(q) => q,
+        Err(e) => {
+            log::warn!("query compile error in {}: {}", file_path, e);
+            return vec![];
+        }
     };
+
+    let mut parser = Parser::new();
+    if parser.set_language(&lang).is_err() {
+        return vec![];
+    }
     let Some(tree) = parser.parse(src, None) else {
         return vec![];
     };
 
-    let target_kinds = kinds_for_filter(&query.filter);
-    let needle = query.text.to_lowercase();
+    let capture_filter = query.capture_filter.to_lowercase();
+    let mut cursor = QueryCursor::new();
+    let mut seen: HashSet<usize> = HashSet::new();
     let mut out = Vec::new();
-    collect_matches(tree.root_node(), src, file_path, &target_kinds, &needle, &mut out);
+
+    for (m, capture_idx) in cursor.captures(&ts_query, tree.root_node(), src.as_bytes()) {
+        let capture = m.captures[capture_idx];
+        let node = capture.node;
+        let byte_start = node.start_byte();
+
+        // Deduplicate: same byte position captured by multiple patterns
+        if !seen.insert(byte_start) {
+            continue;
+        }
+
+        // Skip calls nested inside the argument list of another call
+        if query.filter_nested_calls && call_is_nested(node) {
+            continue;
+        }
+
+        // Text filter on the captured node's source text
+        if !capture_filter.is_empty() {
+            let node_text = src.get(byte_start..node.end_byte()).unwrap_or("");
+            if !node_text.to_lowercase().contains(&capture_filter) {
+                continue;
+            }
+        }
+
+        let line = node.start_position().row;
+        let col = node.start_position().column;
+        let line_text = src.lines().nth(line).unwrap_or("");
+        let capture_name = ts_query.capture_names()[capture.index as usize].to_string();
+
+        out.push(SearchResult {
+            file_path: file_path.to_string(),
+            line,
+            col,
+            snippet: make_snippet(line_text, col),
+            node_kind: node.kind().to_string(),
+            capture_name,
+        });
+    }
+
     out
 }
 
-// ── Plain-text grep (Any filter) ─────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+/// True if the captured name node belongs to a call_expression that is itself
+/// inside the argument_list of another call.
+///
+/// Example: `foo(bar())` → `bar` is nested, `foo` is not.
+/// Example: `foo(x * bar())` → `bar` is nested (inside binary_expression inside argument_list).
+fn call_is_nested(captured_node: tree_sitter::Node) -> bool {
+    // Step 1: walk up to find the call_expression that owns this capture.
+    let mut n = captured_node;
+    let call_expr = loop {
+        match n.parent() {
+            Some(p) if p.kind() == "call_expression" => break p,
+            Some(p) => n = p,
+            None => return false,
+        }
+    };
+
+    // Step 2: keep climbing through expression nodes. If we reach argument_list
+    // before any statement/declaration boundary, the call is nested in another
+    // call's argument list.
+    let mut ancestor = call_expr;
+    while let Some(parent) = ancestor.parent() {
+        match parent.kind() {
+            "argument_list" => return true,
+            // Any *_expression node: keep climbing (handles binary_expression,
+            // unary_expression, cast_expression, parenthesized_expression, …)
+            k if k.ends_with("_expression") => ancestor = parent,
+            // Anything else (statement, declaration, block, …): top-level call.
+            _ => return false,
+        }
+    }
+    false
+}
+
+// ── Plain-text grep ───────────────────────────────────────────────────────
 
 fn grep(file_path: &str, src: &str, text: &str) -> Vec<SearchResult> {
     if text.is_empty() {
@@ -149,72 +292,292 @@ fn grep(file_path: &str, src: &str, text: &str) -> Vec<SearchResult> {
                 col,
                 snippet: make_snippet(content, col),
                 node_kind: "text".into(),
+                capture_name: String::new(),
             })
         })
         .take(500)
         .collect()
 }
 
-// ── AST walk ─────────────────────────────────────────────────────────────
+// ── Tests ─────────────────────────────────────────────────────────────────
 
-fn collect_matches(
-    node: Node<'_>,
-    src: &str,
-    file_path: &str,
-    target_kinds: &[&str],
-    needle: &str,
-    out: &mut Vec<SearchResult>,
-) {
-    if target_kinds.contains(&node.kind()) {
-        if let Some(node_src) = src.get(node.start_byte()..node.end_byte()) {
-            if node_src.to_lowercase().contains(needle) {
-                let line = node.start_position().row;
-                let col = node.start_position().column;
-                let line_text = src.lines().nth(line).unwrap_or("");
-                out.push(SearchResult {
-                    file_path: file_path.to_string(),
-                    line,
-                    col,
-                    snippet: make_snippet(line_text, col),
-                    node_kind: node.kind().to_string(),
-                });
-                // Don't recurse into matched node to avoid duplicates
-                return;
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_query ──────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_empty_is_grep() {
+        let q = parse_query("");
+        assert!(q.is_empty());
+        assert!(q.grep_mode);
     }
 
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            collect_matches(child, src, file_path, target_kinds, needle, out);
-        }
+    #[test]
+    fn parse_plain_text_is_grep() {
+        let q = parse_query("update");
+        assert!(q.grep_mode);
+        assert_eq!(q.raw, "update");
+        assert!(q.ts_query_src.is_empty());
     }
+
+    #[test]
+    fn parse_shorthand_fn() {
+        let q = parse_query("fn:update");
+        assert!(!q.grep_mode);
+        assert_eq!(q.capture_filter, "update");
+        assert!(q.ts_query_src.contains("function_definition"));
+    }
+
+    #[test]
+    fn parse_shorthand_call_no_filter() {
+        let q = parse_query("call:");
+        assert!(!q.grep_mode);
+        assert!(q.capture_filter.is_empty());
+        assert!(q.ts_query_src.contains("call_expression"));
+    }
+
+    #[test]
+    fn parse_raw_ts_query() {
+        let q = parse_query("(identifier) @id");
+        assert!(!q.grep_mode);
+        assert_eq!(q.ts_query_src, "(identifier) @id");
+        assert!(q.capture_filter.is_empty());
+    }
+
+    #[test]
+    fn parse_raw_alternation() {
+        let q = parse_query("[(identifier) (type_identifier)] @name");
+        assert!(!q.grep_mode);
+        assert!(q.ts_query_src.starts_with('['));
+    }
+
+    // ── grep search ──────────────────────────────────────────────────────
+
+    const SAMPLE: &str = r#"
+void AudioManager::update(float dt) {
+    activeSources_.erase(
+        std::remove_if(activeSources_.begin(), activeSources_.end(),
+            [](const AudioSource& s) { return !s.isPlaying(); }),
+        activeSources_.end());
+}
+"#;
+
+    #[test]
+    fn grep_finds_matching_line() {
+        let q = parse_query("update");
+        let results = search_src("fake.cpp", SAMPLE, &q);
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|r| r.snippet.contains("update")));
+    }
+
+    #[test]
+    fn grep_case_insensitive() {
+        let q = parse_query("AUDIOSOURCE");
+        let results = search_src("fake.cpp", SAMPLE, &q);
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn grep_no_match_returns_empty() {
+        let q = parse_query("zzznomatch");
+        let results = search_src("fake.cpp", SAMPLE, &q);
+        assert!(results.is_empty());
+    }
+
+    // ── ts-query: shorthands ─────────────────────────────────────────────
+
+    const CPP_FUNCS: &str = r#"
+#include <iostream>
+
+int add(int a, int b) { return a + b; }
+
+void greet(const char* name) {
+    std::cout << name << "\n";
 }
 
-// ── Kind tables ───────────────────────────────────────────────────────────
+int main() {
+    int result = add(1, 2);
+    greet("hello");
+    return 0;
+}
+"#;
 
-fn kinds_for_filter(filter: &QueryFilter) -> Vec<&'static str> {
-    match filter {
-        QueryFilter::Any => vec![],
-        QueryFilter::Function => vec![
-            "function_definition",
-            "function_declarator",
-        ],
-        QueryFilter::Call => vec!["call_expression"],
-        QueryFilter::Variable => vec![
-            "init_declarator",
-            "declaration",
-        ],
-        QueryFilter::Class => vec![
-            "class_specifier",
-            "struct_specifier",
-            "union_specifier",
-            "enum_specifier",
-        ],
-        QueryFilter::TypeRef => vec!["type_identifier", "primitive_type"],
-        QueryFilter::Include => vec!["preproc_include"],
-        QueryFilter::Parameter => vec!["parameter_declaration"],
-        QueryFilter::Field => vec!["field_declaration"],
+    #[test]
+    fn call_shorthand_finds_calls() {
+        let q = parse_query("call:");
+        let results = search_src("fake.cpp", CPP_FUNCS, &q);
+        let names: Vec<&str> = results.iter().map(|r| r.snippet.as_str()).collect();
+        assert!(results.iter().any(|r| r.snippet.contains("add")), "expected add() call, got: {:?}", names);
+        assert!(results.iter().any(|r| r.snippet.contains("greet")), "expected greet() call, got: {:?}", names);
+    }
+
+    #[test]
+    fn call_shorthand_with_filter() {
+        let q = parse_query("call:greet");
+        let results = search_src("fake.cpp", CPP_FUNCS, &q);
+        assert!(!results.is_empty());
+        assert!(results.iter().all(|r| r.snippet.contains("greet")));
+        // Should not include "add"
+        assert!(!results.iter().any(|r| r.snippet.contains("add") && !r.snippet.contains("greet")));
+    }
+
+    #[test]
+    fn fn_shorthand_finds_definitions() {
+        let q = parse_query("fn:");
+        let results = search_src("fake.cpp", CPP_FUNCS, &q);
+        assert!(results.iter().any(|r| r.snippet.contains("add")));
+        assert!(results.iter().any(|r| r.snippet.contains("greet")));
+        assert!(results.iter().any(|r| r.snippet.contains("main")));
+    }
+
+    #[test]
+    fn fn_shorthand_with_filter() {
+        let q = parse_query("fn:add");
+        let results = search_src("fake.cpp", CPP_FUNCS, &q);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].snippet.contains("add"));
+    }
+
+    #[test]
+    fn param_shorthand_finds_parameters() {
+        let q = parse_query("param:");
+        let results = search_src("fake.cpp", CPP_FUNCS, &q);
+        assert!(results.iter().any(|r| r.snippet.contains('a') || r.snippet.contains('b') || r.snippet.contains("name")));
+    }
+
+    // ── ts-query: raw queries ────────────────────────────────────────────
+
+    #[test]
+    fn raw_query_identifier() {
+        let q = parse_query("(identifier) @id");
+        let results = search_src("fake.cpp", CPP_FUNCS, &q);
+        assert!(!results.is_empty());
+        assert!(results.iter().all(|r| r.node_kind == "identifier"));
+    }
+
+    #[test]
+    fn raw_query_invalid_node_type_returns_empty() {
+        // "not_a_real_node" is not a valid tree-sitter-cpp node type
+        let q = parse_query("(not_a_real_node) @x");
+        let results = search_src("fake.cpp", CPP_FUNCS, &q);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn raw_query_no_capture_returns_empty() {
+        // Valid node but no @capture — nothing to collect
+        let q = parse_query("(function_definition)");
+        // parse_query sees no leading '(' in... wait it does.
+        // ts_query_src = "(function_definition)", no capture → 0 results
+        let results = search_src("fake.cpp", CPP_FUNCS, &q);
+        assert!(results.is_empty());
+    }
+
+    // ── deduplication ────────────────────────────────────────────────────
+
+    #[test]
+    fn no_duplicate_results_same_position() {
+        // call: has two patterns; a simple identifier call should not appear twice
+        let src = "void foo() { bar(); }";
+        let q = parse_query("call:");
+        let results = search_src("fake.cpp", src, &q);
+        let bar_count = results.iter().filter(|r| r.snippet.contains("bar")).count();
+        assert_eq!(bar_count, 1, "bar() should appear exactly once, got {}", bar_count);
+    }
+
+    // ── nested call filtering ────────────────────────────────────────────
+
+    #[test]
+    fn call_filter_excludes_nested_calls_in_args() {
+        // applyForce(gravity_ * body->mass()) — mass() is nested, should not appear
+        // when filtering by name containing 'ma'
+        let src = r#"
+void step() {
+    body->applyForce(gravity_ * body->mass());
+}
+"#;
+        let q = parse_query("call:ma");
+        let results = search_src("fake.cpp", src, &q);
+        // mass() is nested inside applyForce's argument list → should be excluded
+        assert!(
+            results.is_empty(),
+            "expected no results: mass() is nested, got {:?}",
+            results.iter().map(|r| &r.snippet).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn call_filter_includes_outer_call_matching_name() {
+        let src = r#"
+void step() {
+    body->applyForce(gravity_ * body->mass());
+    body->mass();
+}
+"#;
+        let q = parse_query("call:mass");
+        let results = search_src("fake.cpp", src, &q);
+        // Only the standalone `body->mass()` on its own statement should match
+        assert_eq!(results.len(), 1, "expected exactly 1 top-level mass() call, got {:?}", results);
+        assert!(results[0].snippet.contains("mass"));
+    }
+
+    #[test]
+    fn call_filter_does_not_affect_raw_queries() {
+        // Raw ts-query has filter_nested_calls = false, so nested calls are included
+        let src = "void step() { applyForce(mass()); }";
+        let q = parse_query("(call_expression function: (identifier) @match)");
+        let results = search_src("fake.cpp", src, &q);
+        // Both applyForce and mass should appear
+        assert!(results.iter().any(|r| r.snippet.contains("applyForce")));
+        assert!(results.iter().any(|r| r.snippet.contains("mass")));
+    }
+
+    // ── regression: call:main on a project where main() is never called ──
+    //
+    // Previously this caused a panic:
+    //   1. An earlier search loaded AST nodes and set search_ast_scroll to ~341.
+    //   2. call:main returned 0 results so search_ast_nodes was cleared.
+    //   3. The renderer did nodes[341..0] → panic (slice start > end).
+    //
+    // Fix: (a) reset all scroll fields when results are empty in run_search,
+    //      (b) clamp scroll to nodes.len() in the render before slicing.
+
+    #[test]
+    fn call_main_returns_empty_when_main_is_never_called() {
+        // main() is defined here but never called — call: should find 0 results.
+        let src = r#"
+void helper() { }
+
+int main() {
+    helper();
+    return 0;
+}
+"#;
+        let q = parse_query("call:main");
+        let results = search_src("fake.cpp", src, &q);
+        assert!(
+            results.is_empty(),
+            "call:main should return 0 results when main() is only defined, not called; got {:?}",
+            results.iter().map(|r| (&r.snippet, r.line)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn call_main_finds_call_when_main_is_called() {
+        // Unusual but valid — confirm the filter works when main IS called.
+        let src = r#"
+int main();
+
+void bootstrap() {
+    main();
+}
+"#;
+        let q = parse_query("call:main");
+        let results = search_src("fake.cpp", src, &q);
+        assert_eq!(results.len(), 1, "expected exactly one call to main(), got {:?}", results);
+        assert!(results[0].snippet.contains("main"));
     }
 }
 
@@ -222,11 +585,10 @@ fn kinds_for_filter(filter: &QueryFilter) -> Vec<&'static str> {
 
 fn make_snippet(line: &str, col: usize) -> String {
     let start = col.saturating_sub(4);
-    line.chars().skip(start).take(48).collect::<String>().trim_end().to_string()
-}
-
-fn make_parser() -> anyhow::Result<Parser> {
-    let mut p = Parser::new();
-    p.set_language(&tree_sitter_cpp::language())?;
-    Ok(p)
+    line.chars()
+        .skip(start)
+        .take(48)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }

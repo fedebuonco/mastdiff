@@ -19,23 +19,16 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_filter_bar(f: &mut Frame, app: &App, area: Rect) {
-    let filter = app.project_filter.as_str();
-    let query_display = if filter.is_empty() {
-        Span::styled("  Type to filter files…", Style::default().fg(Color::DarkGray))
-    } else {
-        Span::styled(format!("  {}", filter), Style::default().fg(Color::White))
-    };
-
     let n_shown = app.project_filtered.len();
     let n_total = app.project_files.len();
-    let count = Span::styled(
-        format!("  {}/{} files", n_shown, n_total),
-        Style::default().fg(Color::DarkGray),
-    );
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(60, 60, 80)))
+        .border_style(if app.project_filter_active {
+            Style::default().fg(Color::Rgb(100, 180, 255))
+        } else {
+            Style::default().fg(Color::Rgb(60, 60, 80))
+        })
         .title(Span::styled(
             format!(" Project: {} ", app.left_path),
             Style::default().fg(Color::Rgb(100, 180, 255)),
@@ -43,17 +36,56 @@ fn render_filter_bar(f: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let line = Line::from(vec![
-        Span::styled("🔍 ", Style::default().fg(Color::Cyan)),
-        query_display,
-        count,
-    ]);
+    let line = if app.project_filter_active {
+        let filter = app.project_filter.as_str();
+        let text = if filter.is_empty() {
+            Span::styled("  ", Style::default())
+        } else {
+            Span::styled(format!("  {}", filter), Style::default().fg(Color::White))
+        };
+        Line::from(vec![
+            Span::styled("s ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            text,
+            Span::styled(
+                format!("  {}/{} files", n_shown, n_total),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+    } else if !app.project_filter.as_str().is_empty() {
+        // Filter set but not active — show the active filter dimmed
+        Line::from(vec![
+            Span::styled("s ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("  {}", app.project_filter.as_str()),
+                Style::default().fg(Color::Rgb(140, 140, 160)),
+            ),
+            Span::styled(
+                format!("  {}/{} files", n_shown, n_total),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+    } else {
+        // Idle: just show file count and key hints
+        Line::from(vec![
+            Span::styled(
+                format!("  {}/{} files", n_shown, n_total),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                "   s:filter  g:grep  f:ast search  Enter:open  q:quit",
+                Style::default().fg(Color::Rgb(80, 80, 100)),
+            ),
+        ])
+    };
+
     f.render_widget(Paragraph::new(line), inner);
 
-    // Show terminal cursor in filter input
-    let cursor_col = 3 + app.project_filter.cursor_col() as u16;
-    if cursor_col < inner.width {
-        f.set_cursor_position((inner.x + cursor_col, inner.y));
+    // Only show terminal cursor when the filter input is active
+    if app.project_filter_active {
+        let cursor_col = 2 + app.project_filter.cursor_col() as u16;
+        if cursor_col < inner.width {
+            f.set_cursor_position((inner.x + cursor_col, inner.y));
+        }
     }
 }
 
@@ -62,7 +94,7 @@ fn render_file_list(f: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Rgb(60, 60, 80)))
         .title(Span::styled(
-            " Translation Units  [Enter:open  s:search  j/k:move] ",
+            " Translation Units  [Enter:open  s:filter  g:grep  f:ast  j/k:move]",
             Style::default().fg(Color::DarkGray),
         ));
     let inner = block.inner(area);

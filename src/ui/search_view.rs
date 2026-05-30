@@ -31,13 +31,24 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 // ── Search bar ────────────────────────────────────────────────────────────
 
 fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
+    let (mode_label, hint) = if app.search_grep_mode {
+        ("GREP", " type text to search across all files  Enter:run  Esc:back")
+    } else {
+        ("AST ", " fn: call: var: class: type: include: param: field:  or  (ts-query) @cap  Enter:run  Esc:back")
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-        .title(Span::styled(
-            " Search  [fn: call: var: class: type: include: param:]  Enter:run  ↑↓:results  o:open  Esc:back ",
-            Style::default().fg(Color::DarkGray),
-        ));
+        .border_style(Style::default().fg(if app.search_grep_mode { Color::Yellow } else { Color::Cyan }))
+        .title(Line::from(vec![
+            Span::styled(
+                format!(" {} ", mode_label),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(if app.search_grep_mode { Color::Yellow } else { Color::Cyan })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(hint, Style::default().fg(Color::DarkGray)),
+        ]));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -70,10 +81,17 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_results_list(f: &mut Frame, app: &App, area: Rect) {
     let n = app.search_results.len();
-    let title = if n == 0 {
-        " Results ".to_string()
+    let mode_tag = if app.search_query.grep_mode {
+        "grep"
+    } else if !app.search_query.ts_query_src.is_empty() {
+        "ts-query"
     } else {
-        format!(" {} results ", n)
+        ""
+    };
+    let title = if n == 0 {
+        format!(" Results [{}] ", mode_tag)
+    } else {
+        format!(" {} results [{}] ", n, mode_tag)
     };
 
     let block = Block::default()
@@ -112,7 +130,12 @@ fn render_results_list(f: &mut Frame, app: &App, area: Rect) {
 
             let short = result.short_path();
             let lineno = format!(":{}", result.line + 1);
-            let header = trunc(&format!("{}{}", short, lineno), width.saturating_sub(1));
+            let cap = if result.capture_name.is_empty() {
+                String::new()
+            } else {
+                format!(" @{}", result.capture_name)
+            };
+            let header = trunc(&format!("{}{}{}", short, lineno, cap), width.saturating_sub(1));
             let snippet = trunc(&result.snippet, width.saturating_sub(2));
 
             let hstyle = if is_sel {
@@ -171,8 +194,8 @@ fn render_source_pane(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(block, area);
 
     let view_height = inner.height as usize;
-    let scroll = app.search_source_scroll;
     let total = app.search_source_lines.len();
+    let scroll = app.search_source_scroll.min(total);
     let end = (scroll + view_height).min(total);
     let width = inner.width as usize;
 
@@ -218,7 +241,7 @@ fn render_ast_pane(f: &mut Frame, app: &App, area: Rect) {
 
     let view_height = inner.height as usize;
     let nodes = &app.search_ast_nodes;
-    let scroll = app.search_ast_scroll;
+    let scroll = app.search_ast_scroll.min(nodes.len());
     let end = (scroll + view_height).min(nodes.len());
     let width = inner.width as usize;
 

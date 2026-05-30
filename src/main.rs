@@ -5,6 +5,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use log::LevelFilter;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{fs, io, panic, path::Path, time::Duration};
 
@@ -12,6 +13,7 @@ mod app;
 mod ast_diff;
 mod export;
 mod input;
+mod logger;
 mod project;
 mod search;
 mod text_diff;
@@ -29,6 +31,9 @@ struct Cli {
 }
 
 fn main() -> Result<()> {
+    let _ = logger::init("astdiff.log", LevelFilter::Debug);
+    log::info!("astdiff starting");
+
     let cli = Cli::parse();
     let left_path = Path::new(&cli.left);
 
@@ -39,15 +44,18 @@ fn main() -> Result<()> {
             eprintln!("No C++ source files found in {:?}", left_path);
             std::process::exit(1);
         }
+        log::info!("project mode: {} translation units in {:?}", files.len(), left_path);
         App::new_project(files, cli.left.clone())
     } else if let Some(ref right_path) = cli.right {
         // Two-file diff mode
         let left = fs::read_to_string(&cli.left)?;
         let right = fs::read_to_string(right_path)?;
+        log::info!("diff mode: {} vs {}", cli.left, right_path);
         App::new_diff(left, right, cli.left.clone(), right_path.clone())
     } else {
         // Single-file AST browse mode
         let content = fs::read_to_string(&cli.left)?;
+        log::info!("single-file mode: {}", cli.left);
         App::new_single(content, cli.left.clone())
     };
 
@@ -57,6 +65,8 @@ fn main() -> Result<()> {
 
     let hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
+        log::error!("PANIC: {}", info);
+        log::logger().flush();
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
         hook(info);
@@ -86,6 +96,7 @@ fn main() -> Result<()> {
 
     disable_raw_mode()?;
     execute!(io::stdout(), LeaveAlternateScreen)?;
+    log::info!("astdiff exiting cleanly");
 
     Ok(())
 }

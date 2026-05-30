@@ -112,10 +112,12 @@ pub struct App {
     pub project_filtered: Vec<usize>, // indices into project_files
     pub project_cursor: usize,
     pub project_filter: TextInput,
+    pub project_filter_active: bool,
 
     // ---- search
     pub search_input: TextInput,
     pub search_query: SearchQuery,
+    pub search_grep_mode: bool,        // true = plain grep, false = ts-query/shorthand
     pub search_results: Vec<SearchResult>,
     pub search_selected: usize,
     pub search_scroll: usize,         // top of the results list
@@ -179,8 +181,10 @@ impl App {
             project_filtered: vec![],
             project_cursor: 0,
             project_filter: TextInput::new(),
+            project_filter_active: false,
             search_input: TextInput::new(),
             search_query: parse_query(""),
+            search_grep_mode: false,
             search_results: vec![],
             search_selected: 0,
             search_scroll: 0,
@@ -240,8 +244,10 @@ impl App {
             project_filtered: vec![],
             project_cursor: 0,
             project_filter: TextInput::new(),
+            project_filter_active: false,
             search_input: TextInput::new(),
             search_query: parse_query(""),
+            search_grep_mode: false,
             search_results: vec![],
             search_selected: 0,
             search_scroll: 0,
@@ -300,8 +306,10 @@ impl App {
             project_filtered,
             project_cursor: 0,
             project_filter: TextInput::new(),
+            project_filter_active: false,
             search_input: TextInput::new(),
             search_query: parse_query(""),
+            search_grep_mode: false,
             search_results: vec![],
             search_selected: 0,
             search_scroll: 0,
@@ -314,7 +322,7 @@ impl App {
             search_prev_mode: AppMode::ProjectBrowser,
             should_quit: false,
             status_msg: String::from(
-                " j/k:navigate  Enter:open  /:search  q:quit ",
+                " j/k:navigate  Enter:open  s:filter  g:grep  f:ast search  q:quit",
             ),
         }
     }
@@ -929,6 +937,40 @@ impl App {
 
     fn on_project_browser(&mut self, key: KeyEvent) {
         let n = self.project_filtered.len();
+
+        // When the filter bar is active, most keys go to the text input.
+        if self.project_filter_active {
+            match key.code {
+                KeyCode::Esc => {
+                    self.project_filter_active = false;
+                    self.project_filter.clear();
+                    self.rebuild_project_filter();
+                    self.status_msg = String::from(" j/k:navigate  Enter:open  s:filter  g:grep  f:ast search  q:quit");
+                }
+                KeyCode::Enter => {
+                    self.project_filter_active = false;
+                    self.status_msg = format!(
+                        " Filter: {:?} — j/k:navigate  Enter:open  s:edit filter  f:find in code ",
+                        self.project_filter.as_str()
+                    );
+                }
+                KeyCode::Backspace => {
+                    self.project_filter.backspace();
+                    self.rebuild_project_filter();
+                }
+                KeyCode::Left  => self.project_filter.move_left(),
+                KeyCode::Right => self.project_filter.move_right(),
+                KeyCode::Char(c) => {
+                    self.project_filter.push(c);
+                    self.rebuild_project_filter();
+                    self.project_cursor = 0;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Normal command mode
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.project_cursor > 0 {
@@ -942,22 +984,39 @@ impl App {
             }
             KeyCode::PageUp => self.project_cursor = self.project_cursor.saturating_sub(20),
             KeyCode::PageDown => self.project_cursor = (self.project_cursor + 20).min(n.saturating_sub(1)),
-            KeyCode::Home | KeyCode::Char('g') => self.project_cursor = 0,
+            KeyCode::Home => self.project_cursor = 0,
             KeyCode::End | KeyCode::Char('G') => self.project_cursor = n.saturating_sub(1),
 
-            // Filter by filename
-            KeyCode::Char('/') => {
-                self.project_filter.clear();
-                self.status_msg = String::from(" Type to filter files. Esc:clear  Enter:done ");
+            // s: filter file list by name
+            KeyCode::Char('s') => {
+                self.project_filter_active = true;
+                self.status_msg = String::from(" s:filter files  Type to narrow  Enter:confirm  Esc:clear ");
             }
-            KeyCode::Backspace => {
-                self.project_filter.backspace();
-                self.rebuild_project_filter();
+
+            // g: plain-text grep across all files
+            KeyCode::Char('g') => {
+                log::info!("opening grep search from project browser");
+                self.search_input.clear();
+                self.search_results.clear();
+                self.search_selected = 0;
+                self.search_grep_mode = true;
+                self.search_prev_mode = AppMode::ProjectBrowser;
+                self.mode = AppMode::Search;
+                self.status_msg = String::from(" GREP  type text  Enter:search  Esc:back ");
             }
-            KeyCode::Char(c) if c != 'q' => {
-                self.project_filter.push(c);
-                self.rebuild_project_filter();
-                self.project_cursor = 0;
+
+            // f: AST / tree-sitter structural search
+            KeyCode::Char('f') => {
+                log::info!("opening AST search from project browser");
+                self.search_input.clear();
+                self.search_results.clear();
+                self.search_selected = 0;
+                self.search_grep_mode = false;
+                self.search_prev_mode = AppMode::ProjectBrowser;
+                self.mode = AppMode::Search;
+                self.status_msg = String::from(
+                    " AST  fn: call: var: class: type: include: param: field:  or  (ts-query) @cap  Enter:search  Esc:back ",
+                );
             }
 
             // Open selected file
@@ -965,27 +1024,18 @@ impl App {
                 if let Some(&idx) = self.project_filtered.get(self.project_cursor) {
                     let path = self.project_files[idx].file_path.clone();
                     if let Ok(content) = fs::read_to_string(&path) {
+                        log::info!("opening file: {}", path);
                         *self = App::new_single(content, path);
                     } else {
-                        self.status_msg = format!(" Cannot read file. ");
+                        log::warn!("cannot read file: {}", path);
+                        self.status_msg = String::from(" Cannot read file. ");
                     }
                 }
             }
 
-            // Open search across project
-            KeyCode::Char('s') => {
-                self.search_input.clear();
-                self.search_results.clear();
-                self.search_selected = 0;
-                self.search_prev_mode = AppMode::ProjectBrowser;
-                self.mode = AppMode::Search;
-                self.status_msg = String::from(
-                    " Type query (fn:/call:/var:/class:/type:/include:)  Enter:search  Esc:back ",
-                );
-            }
-
             KeyCode::Esc => {
                 self.project_filter.clear();
+                self.project_filter_active = false;
                 self.rebuild_project_filter();
             }
 
@@ -1092,8 +1142,20 @@ impl App {
             self.status_msg = String::from(" Empty query. Type a search term. ");
             return;
         }
+        log::info!("run_search: {:?} grep_mode={}", raw, self.search_grep_mode);
 
-        self.search_query = parse_query(&raw);
+        self.search_query = if self.search_grep_mode {
+            // Force grep regardless of what the user typed
+            crate::search::SearchQuery {
+                raw: raw.clone(),
+                ts_query_src: String::new(),
+                capture_filter: String::new(),
+                grep_mode: true,
+                filter_nested_calls: false,
+            }
+        } else {
+            parse_query(&raw)
+        };
 
         let file_paths: Vec<String> = self
             .project_files
@@ -1111,7 +1173,11 @@ impl App {
             self.load_search_result(0);
         } else {
             self.search_source_lines = vec![];
+            self.search_source_scroll = 0;
+            self.search_source_highlight = 0;
             self.search_ast_nodes = vec![];
+            self.search_ast_scroll = 0;
+            self.search_ast_highlight = 0;
         }
 
         self.status_msg = format!(
@@ -1124,6 +1190,10 @@ impl App {
         let Some(result) = self.search_results.get(idx).cloned() else {
             return;
         };
+        log::debug!(
+            "load_search_result: #{} {}:{} kind={} capture=@{}",
+            idx, result.file_path, result.line + 1, result.node_kind, result.capture_name
+        );
 
         // Clamp results scroll so selected is visible (handled by renderer, but track scroll)
         self.search_scroll = if self.search_selected < self.search_scroll {
