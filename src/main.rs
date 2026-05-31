@@ -70,10 +70,10 @@ fn main() -> Result<()> {
         log::info!("diff mode: {:?} vs {:?}", cli.left, right_path);
         App::new_diff(left, right, cli.left.clone(), right_path.clone(), cfg.clone())
     } else {
-        // Single-file AST browse mode
+        // Single-file mode — treated as a one-file project, opens directly in file view
         let content = fs::read_to_string(&cli.left)?;
         log::info!("single-file mode: {:?}", cli.left);
-        App::new_single(content, cli.left.clone(), cfg.clone())
+        App::new_single_file(cli.left.clone(), content, cfg.clone())
     };
 
     log::debug!("initialising terminal (raw mode + alternate screen + mouse)");

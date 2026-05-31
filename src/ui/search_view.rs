@@ -357,12 +357,15 @@ fn render_results_list(f: &mut Frame, app: &App, area: Rect) {
     if app.search_results.is_empty() {
         let msg = if app.search_running {
             " Searching…"
+        } else if !app.search_source_lines.is_empty() {
+            // File is open but no search has been run yet — browsing mode.
+            " g:grep  f:ast-search  — type a query to search this file"
         } else {
-            " No results — press Enter to search."
+            " Type a query to search…"
         };
         lines.push(Line::styled(
             msg,
-            Style::default().fg(Color::Rgb(80, 80, 100)),
+            Style::default().fg(Color::Rgb(100, 100, 130)),
         ));
     } else {
         // How many results fit?
@@ -462,11 +465,12 @@ fn render_right_pane(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_source_pane(f: &mut Frame, app: &App, area: Rect) {
+    // Prefer the selected result's path; fall back to the directly-opened file name.
     let file_name = app
         .search_results
         .get(app.search_selected)
         .map(|r| r.short_path())
-        .unwrap_or("");
+        .unwrap_or_else(|| short_name(&app.search_open_file));
 
     // Show "Drag to select • Ctrl+C copy" hint in title when a selection exists
     let sel_hint = if app.search_sel.is_some() { "  [Ctrl+C:copy]" } else { "" };
@@ -686,6 +690,10 @@ fn render_ast_node(node: &AstLine, is_highlight: bool, width: usize) -> Line<'st
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+fn short_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
 
 /// Convert a line's `SyntaxSpan` list into ratatui `Span`s, truncating to `max` chars.
 /// Gaps between spans are filled with the default terminal colour.

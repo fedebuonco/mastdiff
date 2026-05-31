@@ -28,7 +28,6 @@ pub const ROWS_PER_RESULT: usize = 2;
 pub enum AppMode {
     TextDiff,
     AstDiff,
-    SingleFile,
     ProjectBrowser,
     Search,
     Help,
@@ -115,8 +114,6 @@ pub struct App {
     pub right_path: String,
     pub left_lines: Vec<String>,
     pub right_lines: Vec<String>,
-    #[allow(dead_code)]
-    pub single_file: bool,
 
     // ---- text diff state
     pub diff_lines: Vec<DiffLine>,
@@ -145,13 +142,6 @@ pub struct App {
     pub ast_filter: AstFilter,
     pub ast_visible: Vec<usize>, // precomputed visible row indices
     pub ast_filter_rows: Vec<usize>, // after filter applied
-    pub single_ast: Vec<AstLine>, // for single-file mode
-    pub single_collapsed: HashSet<usize>,
-    pub single_visible: Vec<usize>,
-    pub single_scroll: usize,
-    pub single_cursor: usize,
-    pub single_filter: AstFilter,
-    pub single_filter_rows: Vec<usize>,
 
     // ---- project browser
     pub project_files: Vec<TranslationUnit>,
@@ -164,6 +154,9 @@ pub struct App {
     pub project_filter_active: bool,
 
     // ---- search
+    /// Path of the file currently shown in the source/AST panes when browsing
+    /// a file directly (no search results). Shown as the source-pane title.
+    pub search_open_file: String,
     pub search_input: TextInput,
     pub search_include: TextInput,     // "files to include" glob patterns (comma-separated)
     pub search_exclude: TextInput,     // "files to exclude" glob patterns (comma-separated)
@@ -240,7 +233,6 @@ impl App {
             right_path,
             left_lines,
             right_lines,
-            single_file: false,
             diff_lines,
             scroll: 0,
             cursor: 0,
@@ -262,13 +254,6 @@ impl App {
             ast_filter: AstFilter::All,
             ast_visible: vec![],
             ast_filter_rows: vec![],
-            single_ast: vec![],
-            single_collapsed: HashSet::new(),
-            single_visible: vec![],
-            single_scroll: 0,
-            single_cursor: 0,
-            single_filter: AstFilter::All,
-            single_filter_rows: vec![],
             project_files: vec![],
             cmake_targets: vec![],
             project_view: ProjectView::Tus,
@@ -277,6 +262,7 @@ impl App {
             project_cursor: 0,
             project_filter: TextInput::new(),
             project_filter_active: false,
+            search_open_file: String::new(),
             search_input: TextInput::new(),
             search_include: TextInput::new(),
             search_exclude: TextInput::new(),
@@ -314,91 +300,40 @@ impl App {
         }
     }
 
-    pub fn new_single(content: String, path: String, config: Config) -> Self {
-        let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
-        let ast = parse_single(&content).unwrap_or_default();
-        let single_visible: Vec<usize> = (0..ast.len()).collect();
-        let single_filter_rows = single_visible.clone();
+    /// Open a single file as a mini one-file project: shows the project browser
+    /// with that file listed and immediately opens it in the search/file view.
+    pub fn new_single_file(path: String, content: String, config: Config) -> Self {
+        use crate::project::TranslationUnit;
+        use std::path::Path as StdPath;
 
-        Self {
-            left_path: path.clone(),
-            right_path: path,
-            left_lines: lines,
-            right_lines: vec![],
-            single_file: true,
-            diff_lines: vec![],
-            scroll: 0,
-            cursor: 0,
-            selection_start: None,
-            selection_end: None,
-            ignore_ws: false,
-            inline_diff: false,
-            context_only: false,
-            context_lines: 3,
-            context_indices: vec![],
-            unified_view: false,
-            hunk_pos: vec![],
-            current_hunk: 0,
-            mode: AppMode::SingleFile,
-            ast_result: None,
-            ast_scroll: 0,
-            ast_cursor: 0,
-            ast_collapsed: HashSet::new(),
-            ast_filter: AstFilter::All,
-            ast_visible: vec![],
-            ast_filter_rows: vec![],
-            single_ast: ast,
-            single_collapsed: HashSet::new(),
-            single_visible: single_visible.clone(),
-            single_scroll: 0,
-            single_cursor: 0,
-            single_filter: AstFilter::All,
-            single_filter_rows,
-            project_files: vec![],
+        let file_size = content.len() as u64;
+        let is_header = matches!(
+            StdPath::new(&path).extension().and_then(|e| e.to_str()),
+            Some("h") | Some("hpp") | Some("hxx") | Some("H")
+        );
+        let tu = TranslationUnit {
+            file_path: path.clone(),
+            file_size,
+            is_header,
+            associated_headers: vec![],
+            included_by: vec![],
+        };
+        // Use the file's parent directory as the "project root" (for relative paths in search).
+        let project_root = StdPath::new(&path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or(".")
+            .to_string();
+
+        let mut app = Self::new_project_loading(project_root, config);
+        // Immediately finish loading with just this one file.
+        app.finish_project_load(crate::project::ProjectData {
+            files: vec![tu],
             cmake_targets: vec![],
-            project_view: ProjectView::Tus,
-            project_display: vec![],
-            project_expanded: HashSet::new(),
-            project_cursor: 0,
-            project_filter: TextInput::new(),
-            project_filter_active: false,
-            search_input: TextInput::new(),
-            search_include: TextInput::new(),
-            search_exclude: TextInput::new(),
-            search_focus: SearchFocus::Query,
-            search_use_regex: false,
-            search_query: parse_query(""),
-            search_grep_mode: false,
-            search_results: vec![],
-            search_selected: 0,
-            search_scroll: 0,
-            search_source_lines: vec![],
-            search_source_tokens: vec![],
-            search_source_scroll: 0,
-            search_source_highlight: 0,
-            search_ast_nodes: vec![],
-            search_ast_scroll: 0,
-            search_ast_highlight: 0,
-            search_prev_mode: AppMode::SingleFile,
-            help_prev_mode: AppMode::SingleFile,
-            should_quit: false,
-            status_msg: String::from(
-                " j/k:scroll  g:grep  f:ast-search  s/e:select  Enter:AST  Space:fold  F:filter  q:quit ",
-            ),
-            config,
-            pending_open: None,
-            search_results_area: Rect::default(),
-            search_source_area:  Rect::default(),
-            search_ast_area:     Rect::default(),
-            search_sel_anchor: None,
-            search_sel: None,
-            loading: false,
-            spinner_tick: 0,
-            search_running: false,
-            search_rx: None,
-            search_cancel: Arc::new(AtomicBool::new(false)),
-            search_debounce: None,
-        }
+        });
+        // Pre-open the file in the search/file view.
+        app.open_project_file(path, content);
+        app
     }
 
     /// Synchronous constructor — kept for integration tests and any callers that
@@ -420,7 +355,6 @@ impl App {
             right_path: dir_path,
             left_lines: vec![],
             right_lines: vec![],
-            single_file: false,
             diff_lines: vec![],
             scroll: 0,
             cursor: 0,
@@ -442,13 +376,6 @@ impl App {
             ast_filter: AstFilter::All,
             ast_visible: vec![],
             ast_filter_rows: vec![],
-            single_ast: vec![],
-            single_collapsed: HashSet::new(),
-            single_visible: vec![],
-            single_scroll: 0,
-            single_cursor: 0,
-            single_filter: AstFilter::All,
-            single_filter_rows: vec![],
             project_files: vec![],
             cmake_targets: vec![],
             project_view: ProjectView::Tus,
@@ -457,6 +384,7 @@ impl App {
             project_cursor: 0,
             project_filter: TextInput::new(),
             project_filter_active: false,
+            search_open_file: String::new(),
             search_input: TextInput::new(),
             search_include: TextInput::new(),
             search_exclude: TextInput::new(),
@@ -520,33 +448,42 @@ impl App {
         );
     }
 
-    /// Open a file from the project browser without destroying the project
-    /// state — preserves `project_files`, `project_cursor`, etc. so that
-    /// `Esc` can navigate back.
+    /// Open a file from the project browser (or as a single-file launch) using
+    /// the search/file view.  Project state (`project_files`, `project_cursor`,
+    /// etc.) is preserved intact so that `Esc` can navigate back.
     fn open_project_file(&mut self, path: String, content: String) {
-        let ast = parse_single(&content).unwrap_or_default();
-        let vis: Vec<usize> = (0..ast.len()).collect();
-
-        self.left_path = path;
-        self.left_lines = content.lines().map(|l| l.to_string()).collect();
-        self.right_lines = vec![];
-        self.single_file = true;
-        self.diff_lines = vec![];
-        self.scroll = 0;
-        self.cursor = 0;
-        self.selection_start = None;
-        self.selection_end = None;
-        self.single_ast = ast;
-        self.single_collapsed = HashSet::new();
-        self.single_visible = vis.clone();
-        self.single_filter_rows = vis;
-        self.single_scroll = 0;
-        self.single_cursor = 0;
-        self.single_filter = AstFilter::All;
-        self.mode = AppMode::SingleFile;
-        self.status_msg = String::from(
-            " Esc:back  j/k:scroll  g:grep  f:ast-search  s/e:select  Enter:AST  Space:fold  F:filter  Ctrl+o:editor ",
+        self.load_file_into_search_pane(&path, &content);
+        // Clear any prior search so the results list is empty and only the file
+        // content is visible in the right pane.
+        self.search_cancel.store(true, Ordering::Relaxed);
+        self.search_rx = None;
+        self.search_running = false;
+        self.search_results.clear();
+        self.search_selected = 0;
+        self.search_scroll = 0;
+        self.search_input.clear();
+        self.search_debounce = None;
+        self.search_focus = SearchFocus::Query;
+        self.search_prev_mode = AppMode::ProjectBrowser;
+        self.mode = AppMode::Search;
+        self.status_msg = format!(
+            " {}  g:grep  f:ast-search  Esc:back  Ctrl+o:editor ",
+            short_path(&path),
         );
+    }
+
+    /// Load file content into the search source/AST panes without affecting
+    /// search results or mode.  Used both by [`open_project_file`] and by the
+    /// search result loader.
+    fn load_file_into_search_pane(&mut self, path: &str, content: &str) {
+        self.search_open_file = path.to_string();
+        self.search_source_lines = content.lines().map(|l| l.to_string()).collect();
+        self.search_source_tokens = crate::syntax::highlight(content);
+        self.search_ast_nodes = parse_single(content).unwrap_or_default();
+        self.search_source_scroll = 0;
+        self.search_source_highlight = usize::MAX; // no highlight when just browsing
+        self.search_ast_scroll = 0;
+        self.search_ast_highlight = usize::MAX;
     }
 
     // ── Scroll clamping (called by renderer) ──────────────────────────────
@@ -582,7 +519,6 @@ impl App {
         match self.mode {
             AppMode::TextDiff => self.on_text_diff(key),
             AppMode::AstDiff => self.on_ast_diff(key),
-            AppMode::SingleFile => self.on_single_file(key),
             AppMode::ProjectBrowser => self.on_project_browser(key),
             AppMode::Search => self.on_search(key),
             AppMode::Help => self.on_help(key),
@@ -958,202 +894,6 @@ impl App {
         }
     }
 
-    // ── Single-file mode ──────────────────────────────────────────────────
-
-    fn on_single_file(&mut self, key: KeyEvent) {
-        let total = self.left_lines.len();
-        let vis_len = self.single_filter_rows.len();
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if self.cursor > 0 {
-                    self.cursor -= 1;
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.cursor + 1 < total {
-                    self.cursor += 1;
-                }
-            }
-            KeyCode::PageUp => {
-                self.cursor = self.cursor.saturating_sub(20);
-                self.scroll = self.scroll.saturating_sub(20);
-            }
-            KeyCode::PageDown => self.cursor = (self.cursor + 20).min(total.saturating_sub(1)),
-            KeyCode::Home => {
-                self.cursor = 0;
-                self.scroll = 0;
-            }
-            KeyCode::End | KeyCode::Char('G') => self.cursor = total.saturating_sub(1),
-
-            // ── Selection → AST zoom
-            KeyCode::Char('s') => {
-                self.selection_start = Some(self.cursor);
-                self.selection_end = None;
-                self.status_msg = format!(
-                    " Start: line {}. Move and press 'e'. ",
-                    self.cursor + 1
-                );
-            }
-            KeyCode::Char('e') => {
-                if let Some(s) = self.selection_start {
-                    let end = self.cursor;
-                    let (a, b) = if s <= end { (s, end) } else { (end, s) };
-                    self.selection_start = Some(a);
-                    self.selection_end = Some(b);
-                    self.status_msg =
-                        format!(" Lines {}-{}. Enter to zoom AST. Esc to clear. ", a + 1, b + 1);
-                }
-            }
-            KeyCode::Enter => {
-                let (start, end) = match (self.selection_start, self.selection_end) {
-                    (Some(a), Some(b)) => (a, b),
-                    _ => (0, total.saturating_sub(1)),
-                };
-                // Filter single AST to source lines in range
-                let matching: Vec<usize> = self
-                    .single_visible
-                    .iter()
-                    .copied()
-                    .filter(|&r| {
-                        let row = self.single_ast.get(r).map(|n| n.source_row).unwrap_or(0);
-                        row >= start && row <= end
-                    })
-                    .collect();
-                self.single_filter_rows = if matching.is_empty() {
-                    self.single_visible.clone()
-                } else {
-                    matching
-                };
-                self.single_scroll = 0;
-                self.single_cursor = 0;
-                self.status_msg = format!(
-                    " AST for lines {}-{}. Esc to restore. Space:fold  f:filter ",
-                    start + 1,
-                    end + 1
-                );
-            }
-            KeyCode::Esc => {
-                let has_selection = self.selection_start.is_some();
-                let has_ast_zoom  = self.single_filter_rows.len() != self.single_visible.len();
-                if has_selection || has_ast_zoom {
-                    // First Esc: clear any active selection / AST zoom
-                    self.selection_start = None;
-                    self.selection_end = None;
-                    self.single_filter_rows = self.single_visible.clone();
-                    self.single_scroll = 0;
-                    self.single_cursor = 0;
-                    if !self.project_files.is_empty() {
-                        self.status_msg = String::from(
-                            " Esc:back  j/k:scroll  g:grep  f:ast-search  s/e:select  Enter:AST  Space:fold  F:filter  Ctrl+o:editor ",
-                        );
-                    } else {
-                        self.status_msg = String::from(
-                            " j/k:scroll  g:grep  f:ast-search  s/e:select  Enter:AST  Space:fold  F:filter  q:quit ",
-                        );
-                    }
-                } else if !self.project_files.is_empty() {
-                    // Second Esc (nothing to clear): return to project browser
-                    log::info!("mode: SingleFile → ProjectBrowser");
-                    self.mode = AppMode::ProjectBrowser;
-                    self.status_msg = String::from(
-                        " j/k:navigate  Enter:open  s:filter  g:grep  f:ast  q:quit",
-                    );
-                }
-            }
-
-            // ── AST collapse (right pane)
-            KeyCode::Char(' ') => {
-                if let Some(&raw) = self.single_filter_rows.get(self.single_cursor) {
-                    let dummy: Vec<AstLine> = vec![];
-                    if row_has_children(raw, &self.single_ast, &dummy) {
-                        if self.single_collapsed.contains(&raw) {
-                            self.single_collapsed.remove(&raw);
-                        } else {
-                            self.single_collapsed.insert(raw);
-                        }
-                        self.rebuild_single_visible();
-                    }
-                }
-            }
-
-            // ── AST cursor (right pane)
-            KeyCode::Left => {
-                if self.single_cursor > 0 {
-                    self.single_cursor -= 1;
-                }
-            }
-            KeyCode::Right => {
-                if self.single_cursor + 1 < vis_len {
-                    self.single_cursor += 1;
-                }
-            }
-
-            // ── Search (g=grep, f=AST tree-sitter query) ─────────────────
-            KeyCode::Char('g') => {
-                log::info!("mode: SingleFile → Search (grep)");
-                self.search_input.clear();
-                self.search_results.clear();
-                self.search_selected = 0;
-                self.search_grep_mode = true;
-                self.search_prev_mode = AppMode::SingleFile;
-                self.mode = AppMode::Search;
-                self.status_msg = String::from(
-                    " GREP  type text — results stream live  Enter:search  Esc:back ",
-                );
-            }
-            KeyCode::Char('f') => {
-                log::info!("mode: SingleFile → Search (ast)");
-                self.search_input.clear();
-                self.search_results.clear();
-                self.search_selected = 0;
-                self.search_grep_mode = false;
-                self.search_prev_mode = AppMode::SingleFile;
-                self.mode = AppMode::Search;
-                self.status_msg = String::from(
-                    " AST  fn: call: var: class: type: include: param: field:  or  (ts-query) @cap  Esc:back ",
-                );
-            }
-
-            // ── AST node-type filter (Shift+F = cycle all→functions→classes→variables)
-            KeyCode::Char('F') => {
-                self.single_filter = self.single_filter.next();
-                self.rebuild_single_visible();
-                self.single_cursor = 0;
-                self.single_scroll = 0;
-                self.status_msg =
-                    format!(" AST filter: {}  (Shift+F to cycle) ", self.single_filter.label());
-            }
-
-            // ── Open in external editor
-            KeyCode::Char('o') if key.modifiers == KeyModifiers::CONTROL => {
-                self.pending_open = Some((self.left_path.clone(), self.cursor, 0));
-                self.status_msg = format!(
-                    " Opening {} +{} in {} ",
-                    self.left_path, self.cursor + 1, self.config.open_in.label()
-                );
-            }
-
-            _ => {}
-        }
-    }
-
-    fn rebuild_single_visible(&mut self) {
-        let dummy: Vec<AstLine> = vec![];
-        self.single_visible = visible_rows(&self.single_ast, &dummy, &self.single_collapsed);
-        let keyword = self.single_filter.keyword();
-        self.single_filter_rows = if keyword.is_empty() {
-            self.single_visible.clone()
-        } else {
-            let filtered_set: HashSet<usize> =
-                filter_rows(&self.single_ast, keyword).into_iter().collect();
-            self.single_visible
-                .iter()
-                .copied()
-                .filter(|r| filtered_set.contains(r))
-                .collect()
-        };
-    }
-
     // ── AST diff launch ───────────────────────────────────────────────────
 
     fn launch_ast_diff(&mut self, disp_start: usize, disp_end: usize) {
@@ -1243,22 +983,6 @@ impl App {
         }
     }
 
-    pub fn clamp_single_scroll(&mut self, view_height: usize) {
-        if view_height == 0 {
-            return;
-        }
-        let vis_len = self.single_filter_rows.len();
-        if self.single_cursor >= self.single_scroll + view_height {
-            self.single_scroll = self.single_cursor - view_height + 1;
-        }
-        if self.single_cursor < self.single_scroll {
-            self.single_scroll = self.single_cursor;
-        }
-        if self.single_scroll + view_height > vis_len {
-            self.single_scroll = vis_len.saturating_sub(view_height);
-        }
-    }
-
     // ── Mouse handling ────────────────────────────────────────────────────
 
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
@@ -1267,7 +991,6 @@ impl App {
             AppMode::Help
             | AppMode::TextDiff
             | AppMode::AstDiff
-            | AppMode::SingleFile
             | AppMode::ProjectBrowser => {}
         }
     }
@@ -1831,12 +1554,14 @@ impl App {
                 return;
             }
 
-            // ── Back — always returns to previous mode
+            // ── Back — returns to previous mode (project browser or diff)
             KeyCode::Esc => {
                 log::debug!("mode: Search → {:?}", self.search_prev_mode);
                 self.mode = self.search_prev_mode.clone();
                 self.search_focus = SearchFocus::Query;
-                self.status_msg = String::from(" j/k:navigate  Enter:open  s:search  q:quit ");
+                self.status_msg = String::from(
+                    " j/k:navigate  Enter:open  s:filter  g:grep  f:ast  q:quit",
+                );
                 return;
             }
 
@@ -2121,6 +1846,10 @@ impl App {
 // ── Free helpers ─────────────────────────────────────────────────────────
 
 /// Returns true if `(col, row)` is inside `area` (inclusive of border).
+fn short_path(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
 fn rect_hit(area: Rect, col: u16, row: u16) -> bool {
     area.width > 0
         && area.height > 0
