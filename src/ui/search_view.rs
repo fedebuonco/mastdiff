@@ -54,14 +54,14 @@ const SHORTHANDS: &[(&str, Color)] = &[
 fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
     let focused = app.search_focus == SearchFocus::Query;
     let (mode_label, hint) = if app.search_grep_mode {
-        ("GREP", " type text  Tab:filters  Enter:run  Alt+R:regex  Esc:back")
+        ("GREP", " type text  Tab:filters  Enter:run  Alt+R:regex  Alt+C:case  Esc:back")
     } else {
-        ("AST ", " fn: call: var: class: type: include: param: field:  (ts-query)  Tab:filters  Enter:run  Alt+R:regex")
+        ("AST ", " fn: call: var: class: type: include: param: field:  (ts-query)  Tab:filters  Enter:run  Alt+R:regex  Alt+C:case")
     };
     let base_color = if app.search_grep_mode { Color::Yellow } else { Color::Cyan };
     let border_color = if focused { base_color } else { Color::Rgb(60, 80, 100) };
 
-    // Regex toggle badge shown in the title bar
+    // Regex toggle badge
     let regex_badge = if app.search_use_regex {
         Span::styled(
             " [.*] ",
@@ -71,10 +71,20 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         )
     } else {
+        Span::styled(" [.*] ", Style::default().fg(Color::Rgb(70, 70, 90)))
+    };
+
+    // Case-sensitive toggle badge
+    let case_badge = if app.search_case_sensitive {
         Span::styled(
-            " [.*] ",
-            Style::default().fg(Color::Rgb(70, 70, 90)),
+            " [Aa] ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(80, 160, 220))
+                .add_modifier(Modifier::BOLD),
         )
+    } else {
+        Span::styled(" [Aa] ", Style::default().fg(Color::Rgb(70, 70, 90)))
     };
 
     let block = Block::default()
@@ -89,6 +99,7 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             regex_badge,
+            case_badge,
             Span::styled(hint, Style::default().fg(Color::DarkGray)),
         ]));
     let inner = block.inner(area);

@@ -162,6 +162,7 @@ pub struct App {
     pub search_exclude: TextInput,     // "files to exclude" glob patterns (comma-separated)
     pub search_focus: SearchFocus,     // which input box has keyboard focus
     pub search_use_regex: bool,        // Alt+R — treat query/filter as a regex
+    pub search_case_sensitive: bool,   // Alt+C — case-sensitive match (default: insensitive)
     pub search_query: SearchQuery,
     pub search_grep_mode: bool,        // true = plain grep, false = ts-query/shorthand
     pub search_results: Vec<SearchResult>,
@@ -268,6 +269,7 @@ impl App {
             search_exclude: TextInput::new(),
             search_focus: SearchFocus::Query,
             search_use_regex: false,
+            search_case_sensitive: false,
             search_query: parse_query(""),
             search_grep_mode: false,
             search_results: vec![],
@@ -390,6 +392,7 @@ impl App {
             search_exclude: TextInput::new(),
             search_focus: SearchFocus::Query,
             search_use_regex: false,
+            search_case_sensitive: false,
             search_query: parse_query(""),
             search_grep_mode: false,
             search_results: vec![],
@@ -1542,6 +1545,13 @@ impl App {
                 return;
             }
 
+            // ── Toggle case-sensitive mode (Alt+C) — retriggers search automatically
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::ALT => {
+                self.search_case_sensitive = !self.search_case_sensitive;
+                self.nudge_search_debounce();
+                return;
+            }
+
             // ── Copy current source selection to clipboard (Ctrl+C)
             KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
                 self.copy_source_selection();
@@ -1622,10 +1632,12 @@ impl App {
                 grep_mode: true,
                 filter_nested_calls: false,
                 use_regex: self.search_use_regex,
+                case_sensitive: self.search_case_sensitive,
             }
         } else {
             let mut q = parse_query(&raw);
             q.use_regex = self.search_use_regex;
+            q.case_sensitive = self.search_case_sensitive;
             q
         };
 

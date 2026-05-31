@@ -66,11 +66,13 @@ fn left_column() -> Vec<Line<'static>> {
 
     section(&mut lines, "SEARCH — GREP  (press g from project view)");
     row(&mut lines, "<text>",         "plain-text search across all files");
-    row(&mut lines, "",               "case-insensitive, whole-file scan");
+    row(&mut lines, "",               "default: case-insensitive  (Alt+C to toggle)");
     blank(&mut lines);
 
-    section(&mut lines, "SEARCH — navigation");
-    row(&mut lines, "Enter",          "run the search");
+    section(&mut lines, "SEARCH — navigation & options");
+    row(&mut lines, "Enter",          "run the search immediately");
+    row(&mut lines, "Alt+R",          "toggle regex mode  [.*] badge lit = ON");
+    row(&mut lines, "Alt+C",          "toggle case-sensitive  [Aa] badge lit = ON");
     row(&mut lines, "↑ / ↓",          "move through results");
     row(&mut lines, "PgUp / PgDn",    "jump 10 results");
     row(&mut lines, "Ctrl+o",         "open result in external editor");

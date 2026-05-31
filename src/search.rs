@@ -88,8 +88,9 @@ pub struct SearchQuery {
     /// True → skip captures whose containing call_expression is inside an argument_list
     pub filter_nested_calls: bool,
     /// True → treat `raw` (grep) / `capture_filter` (AST) as a regular expression.
-    /// Regex is applied case-sensitively (users can add `(?i)` themselves).
     pub use_regex: bool,
+    /// True → match text exactly as typed; false (default) → case-insensitive.
+    pub case_sensitive: bool,
 }
 
 impl SearchQuery {
@@ -117,6 +118,7 @@ pub fn parse_query(raw: &str) -> SearchQuery {
             grep_mode: false,
             filter_nested_calls: false,
             use_regex: false,
+            case_sensitive: false,
         };
     }
 
@@ -144,6 +146,7 @@ pub fn parse_query(raw: &str) -> SearchQuery {
                 grep_mode: false,
                 filter_nested_calls: *filter_nested,
                 use_regex: false,
+                case_sensitive: false,
             };
         }
     }
@@ -157,6 +160,7 @@ pub fn parse_query(raw: &str) -> SearchQuery {
         grep_mode: true,
         filter_nested_calls: false,
         use_regex: false,
+        case_sensitive: false,
     }
 }
 
@@ -361,7 +365,7 @@ pub fn search_file(file_path: &str, query: &SearchQuery) -> Vec<SearchResult> {
 
 pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<SearchResult> {
     if query.grep_mode {
-        return grep(file_path, src, &query.raw, query.use_regex);
+        return grep(file_path, src, &query.raw, query.use_regex, query.case_sensitive);
     }
     if query.ts_query_src.is_empty() {
         return vec![];
@@ -387,9 +391,16 @@ pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<Search
 
     // Compile the capture filter — regex or plain substring.
     // We do this once per file rather than per-capture to avoid repeated compilation.
-    let capture_filter_lower = query.capture_filter.to_lowercase();
+    let capture_filter_cmp = if query.case_sensitive {
+        query.capture_filter.clone()
+    } else {
+        query.capture_filter.to_lowercase()
+    };
     let capture_regex: Option<Regex> = if query.use_regex && !query.capture_filter.is_empty() {
-        match Regex::new(&query.capture_filter) {
+        match regex::RegexBuilder::new(&query.capture_filter)
+            .case_insensitive(!query.case_sensitive)
+            .build()
+        {
             Ok(re) => Some(re),
             Err(e) => {
                 log::warn!("regex compile error for capture filter {:?}: {}", query.capture_filter, e);
@@ -436,9 +447,14 @@ pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<Search
             if !re.is_match(node_text) {
                 continue;
             }
-        } else if !capture_filter_lower.is_empty() {
+        } else if !capture_filter_cmp.is_empty() {
             let node_text = src.get(byte_start..node.end_byte()).unwrap_or("");
-            if !node_text.to_lowercase().contains(&capture_filter_lower) {
+            let cmp_text = if query.case_sensitive {
+                node_text.to_string()
+            } else {
+                node_text.to_lowercase()
+            };
+            if !cmp_text.contains(&capture_filter_cmp) {
                 continue;
             }
         }
@@ -505,13 +521,16 @@ fn call_is_nested(captured_node: tree_sitter::Node) -> bool {
 
 // ── Plain-text grep ───────────────────────────────────────────────────────
 
-fn grep(file_path: &str, src: &str, text: &str, use_regex: bool) -> Vec<SearchResult> {
+fn grep(file_path: &str, src: &str, text: &str, use_regex: bool, case_sensitive: bool) -> Vec<SearchResult> {
     if text.is_empty() {
         return vec![];
     }
     if use_regex {
-        // Compile once, search every line.
-        let re = match Regex::new(text) {
+        // Compile once, search every line. Honour the case toggle via RegexBuilder.
+        let re = match regex::RegexBuilder::new(text)
+            .case_insensitive(!case_sensitive)
+            .build()
+        {
             Ok(r) => r,
             Err(e) => {
                 log::warn!("grep regex compile error {:?}: {}", text, e);
@@ -535,23 +554,41 @@ fn grep(file_path: &str, src: &str, text: &str, use_regex: bool) -> Vec<SearchRe
             .take(MAX_RESULTS_PER_FILE)
             .collect();
     }
-    // Plain case-insensitive substring match.
-    let needle = text.to_lowercase();
-    src.lines()
-        .enumerate()
-        .filter_map(|(line, content)| {
-            let col = content.to_lowercase().find(&needle)?;
-            Some(SearchResult {
-                file_path: file_path.to_string(),
-                line,
-                col,
-                snippet: make_snippet(content, col),
-                node_kind: "text".into(),
-                capture_name: String::new(),
+    // Plain substring match — case-sensitive or insensitive.
+    if case_sensitive {
+        src.lines()
+            .enumerate()
+            .filter_map(|(line, content)| {
+                let col = content.find(text)?;
+                Some(SearchResult {
+                    file_path: file_path.to_string(),
+                    line,
+                    col,
+                    snippet: make_snippet(content, col),
+                    node_kind: "text".into(),
+                    capture_name: String::new(),
+                })
             })
-        })
-        .take(MAX_RESULTS_PER_FILE)
-        .collect()
+            .take(MAX_RESULTS_PER_FILE)
+            .collect()
+    } else {
+        let needle = text.to_lowercase();
+        src.lines()
+            .enumerate()
+            .filter_map(|(line, content)| {
+                let col = content.to_lowercase().find(&needle)?;
+                Some(SearchResult {
+                    file_path: file_path.to_string(),
+                    line,
+                    col,
+                    snippet: make_snippet(content, col),
+                    node_kind: "text".into(),
+                    capture_name: String::new(),
+                })
+            })
+            .take(MAX_RESULTS_PER_FILE)
+            .collect()
+    }
 }
 
 fn make_snippet(line: &str, col: usize) -> String {
