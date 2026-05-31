@@ -51,14 +51,21 @@ fn left_column() -> Vec<Line<'static>> {
 
     section(&mut lines, "SEARCH — AST operators  (press f from project view)");
     row(&mut lines, "fn:<name>",      "function definitions matching <name>");
-    row(&mut lines, "fn:",            "all function definitions in the project");
     row(&mut lines, "call:<name>",    "call sites of <name> (excludes nested args)");
-    row(&mut lines, "var:<name>",     "variable declarations matching <name>");
-    row(&mut lines, "class:<name>",   "class / struct definitions");
-    row(&mut lines, "type:<name>",    "type alias / typedef declarations");
-    row(&mut lines, "include:<hdr>",  "#include directives matching <hdr>");
-    row(&mut lines, "param:<name>",   "function parameters matching <name>");
+    row(&mut lines, "var:<name>",     "variable declarations");
+    row(&mut lines, "class:<name>",   "class / struct / enum definitions");
     row(&mut lines, "field:<name>",   "struct/class field declarations");
+    row(&mut lines, "param:<name>",   "function parameters");
+    row(&mut lines, "type:<name>",    "type identifiers");
+    row(&mut lines, "include:<hdr>",  "#include directives");
+    row(&mut lines, "lambda:",        "lambda expressions  (filter by text)");
+    row(&mut lines, "macro:<name>",   "#define / macro definitions");
+    row(&mut lines, "ns:<name>",      "namespace definitions");
+    row(&mut lines, "op:<sym>",       "operator overloads  (e.g. op:==)");
+    row(&mut lines, "using:<name>",   "using declarations");
+    row(&mut lines, "tpl:<name>",     "template declarations (fn or class)");
+    row(&mut lines, "throw:",         "throw statements");
+    row(&mut lines, "cast:<type>",    "cast expressions (C-style + static/dynamic/…)");
     blank(&mut lines);
     row(&mut lines, "(node_kind) @cap","raw tree-sitter S-expression query");
     row(&mut lines, "  e.g.",         "(call_expression function: (identifier) @fn)");
@@ -118,6 +125,8 @@ fn right_column() -> Vec<Line<'static>> {
     row(&mut lines, "s / e + Enter",  "select line range → zoom AST to slice");
     row(&mut lines, "Space",          "collapse / expand AST node");
     row(&mut lines, "Shift+F",        "cycle AST filter (all / functions / classes / vars)");
+    row(&mut lines, "v",              "cycle AST viz (Tree ↔ Timeline)");
+    row(&mut lines, "dbl-click",      "timeline: zoom into node  (dbl-click base to zoom out)");
     row(&mut lines, "Esc",            "clear selection / zoom  (or back to project)");
     row(&mut lines, "Ctrl+o",         "open current line in external editor");
     blank(&mut lines);

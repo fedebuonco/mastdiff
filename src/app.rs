@@ -70,6 +70,28 @@ pub enum SearchFocus {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum AstVizMode {
+    Tree,
+    Timeline,
+}
+
+impl AstVizMode {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Tree     => "Tree",
+            Self::Timeline => "Timeline",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Tree     => Self::Timeline,
+            Self::Timeline => Self::Tree,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum AstFilter {
     All,
     Functions,
@@ -178,6 +200,9 @@ pub struct App {
     pub search_ast_collapsed: HashSet<usize>, // raw indices of collapsed nodes
     pub search_ast_visible: Vec<usize>,       // visible raw indices (after collapsing)
     pub search_ast_cursor: usize,             // cursor in search_ast_visible (interactive nav)
+    pub search_ast_viz: AstVizMode,           // current AST visualization mode
+    pub search_timeline_base: Option<usize>,  // raw node index that is the zoom base in timeline
+    search_timeline_last_click: Option<(std::time::Instant, u16, u16)>, // for double-click detection
     pub search_prev_mode: AppMode,    // mode to return to on Esc
 
     // ---- help overlay
@@ -288,6 +313,9 @@ impl App {
             search_ast_collapsed: HashSet::new(),
             search_ast_visible: vec![],
             search_ast_cursor: 0,
+            search_ast_viz: AstVizMode::Tree,
+            search_timeline_base: None,
+            search_timeline_last_click: None,
             search_prev_mode: AppMode::TextDiff,
             help_prev_mode: AppMode::TextDiff,
             should_quit: false,
@@ -414,6 +442,9 @@ impl App {
             search_ast_collapsed: HashSet::new(),
             search_ast_visible: vec![],
             search_ast_cursor: 0,
+            search_ast_viz: AstVizMode::Tree,
+            search_timeline_base: None,
+            search_timeline_last_click: None,
             search_prev_mode: AppMode::ProjectBrowser,
             help_prev_mode: AppMode::ProjectBrowser,
             should_quit: false,
@@ -989,6 +1020,22 @@ impl App {
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
+    pub fn clamp_search_ast_scroll(&mut self, view_height: usize) {
+        if view_height == 0 {
+            return;
+        }
+        let vis_len = self.search_ast_visible.len();
+        if self.search_ast_cursor < self.search_ast_scroll {
+            self.search_ast_scroll = self.search_ast_cursor;
+        }
+        if self.search_ast_cursor >= self.search_ast_scroll + view_height {
+            self.search_ast_scroll = self.search_ast_cursor - view_height + 1;
+        }
+        if vis_len > 0 && self.search_ast_scroll + view_height > vis_len {
+            self.search_ast_scroll = vis_len.saturating_sub(view_height);
+        }
+    }
+
     pub fn clamp_ast_scroll(&mut self, view_height: usize) {
         if view_height == 0 {
             return;
@@ -1049,6 +1096,8 @@ impl App {
                     let pos = self.screen_to_source_pos(col, row);
                     self.search_sel_anchor = pos;
                     self.search_sel = pos.map(|p| (p, p));
+                } else if rect_hit(self.search_ast_area, col, row) {
+                    self.handle_ast_viz_click(col, row);
                 } else if rect_hit(self.search_results_area, col, row) && !self.search_results.is_empty() {
                     // Click to select result
                     let inner_y = self.search_results_area.y + 1;
@@ -1091,6 +1140,211 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Handle a left-click inside the AST pane.
+    /// Single click → scroll source pane to the clicked line.
+    /// Double click → set/clear the timeline zoom base.
+    fn handle_ast_viz_click(&mut self, col: u16, row: u16) {
+        let area    = self.search_ast_area;
+        let inner_x = area.x + 1;
+        let inner_y = area.y + 1;
+        let inner_w = area.width.saturating_sub(2) as usize;
+        let inner_h = area.height.saturating_sub(2) as usize;
+        if col < inner_x || row < inner_y { return; }
+        let cx = (col - inner_x) as usize;
+        let cy = (row - inner_y) as usize;
+        if cx >= inner_w || cy >= inner_h { return; }
+
+        let total_src = self.search_source_lines.len();
+        if total_src == 0 { return; }
+
+        // ── Tree view: clicking a row moves the cursor there ─────────────────
+        if self.search_ast_viz == AstVizMode::Tree {
+            let vis_pos = self.search_ast_scroll + cy;
+            if vis_pos >= self.search_ast_visible.len() { return; }
+            let raw = self.search_ast_visible[vis_pos];
+            if raw >= self.search_ast_nodes.len() { return; }
+            self.search_ast_cursor = vis_pos;
+            self.highlight_ast_node_in_source(raw);
+            return;
+        }
+
+        // Detect double-click: two clicks within 400 ms at the same position (±1 cell).
+        let now = std::time::Instant::now();
+        let is_double = self.search_timeline_last_click
+            .map(|(t, lc, lr)| {
+                now.duration_since(t).as_millis() < 400
+                    && (col as i32 - lc as i32).abs() <= 1
+                    && (row as i32 - lr as i32).abs() <= 1
+            })
+            .unwrap_or(false);
+        self.search_timeline_last_click = Some((now, col, row));
+
+        // ── Timeline ─────────────────────────────────────────────────────────
+        let label_w = 4usize;
+        let chart_w = inner_w.saturating_sub(label_w);
+        if chart_w == 0 { return; }
+
+        let nodes = &self.search_ast_nodes;
+        let non_empty: Vec<(usize, _)> = nodes.iter()
+            .enumerate()
+            .filter(|(_, n)| !n.empty && !n.kind.is_empty())
+            .collect();
+        if non_empty.is_empty() { return; }
+
+        // Compute the zoom window (respects current base if set).
+        let (min_row, max_row, base_depth) =
+            if let Some(br) = self.search_timeline_base.filter(|&br| br < nodes.len()) {
+                let n = &nodes[br];
+                (n.source_row, n.source_end_row, n.depth)
+            } else {
+                let mn = non_empty.iter().map(|(_, n)| n.source_row).min().unwrap_or(0);
+                let mx = non_empty.iter().map(|(_, n)| n.source_end_row).max().unwrap_or(0);
+                (mn, mx, 0)
+            };
+        let total_span = (max_row - min_row + 1).max(1);
+
+        // cy == 0 is the ruler header row; depth rows start at cy == 1.
+        let clicked_depth = if cy == 0 {
+            // Clicked on the ruler — just navigate source, no zoom change.
+            let source_line = if cx >= label_w {
+                min_row + (cx - label_w) * total_span / chart_w
+            } else { min_row };
+            let clamped = source_line.min(total_src.saturating_sub(1));
+            self.search_source_scroll    = clamped;
+            self.search_source_highlight = clamped;
+            return;
+        } else {
+            let depth_scroll = self.search_ast_scroll;
+            base_depth + depth_scroll + (cy - 1)
+        };
+
+        // Map chart column → source position.
+        let source_pos = if cx >= label_w {
+            min_row + (cx - label_w) * total_span / chart_w
+        } else {
+            min_row
+        };
+
+        // Find the AST node at (depth, source_pos) and, if double-clicking the
+        // base, pre-compute the zoom-out target. Do it all inside a borrow scope
+        // so the immutable borrows of `nodes`/`non_empty` are released before the
+        // mutable `highlight_ast_node_in_source` call below.
+        let (hit_raw, zoom_parent) = {
+            let hit = non_empty.iter().find(|(_, n)| {
+                n.depth == clicked_depth
+                    && n.source_row <= source_pos
+                    && n.source_end_row >= source_pos
+            }).map(|(i, _)| *i);
+
+            // Pre-compute zoom-out parent (only needed if is_double + hit == current base).
+            let parent = if is_double {
+                if let Some(raw) = hit.filter(|&r| self.search_timeline_base == Some(r)) {
+                    let nd = &nodes[raw];
+                    non_empty.iter()
+                        .filter(|(_, n)| {
+                            n.depth < nd.depth
+                                && n.source_row  <= nd.source_row
+                                && n.source_end_row >= nd.source_end_row
+                        })
+                        .max_by_key(|(_, n)| n.depth)
+                        .map(|(i, _)| *i)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            // `nodes` and `non_empty` borrows end here.
+            (hit, parent)
+        };
+
+        // ── Single-click: navigate + highlight ───────────────────────────────
+        if let Some(raw) = hit_raw {
+            self.highlight_ast_node_in_source(raw);
+        } else {
+            let clamped = source_pos.min(total_src.saturating_sub(1));
+            self.search_source_scroll    = clamped;
+            self.search_source_highlight = clamped;
+        }
+
+        // ── Double-click: set/clear zoom base ────────────────────────────────
+        if is_double {
+            match hit_raw {
+                Some(raw) if self.search_timeline_base == Some(raw) => {
+                    self.search_timeline_base = zoom_parent;
+                }
+                Some(raw) => {
+                    self.search_timeline_base = Some(raw);
+                }
+                None => {
+                    self.search_timeline_base = None;
+                }
+            }
+            self.search_ast_scroll = 0;
+            log::debug!(
+                "timeline zoom: base={:?}",
+                self.search_timeline_base
+                    .and_then(|r| self.search_ast_nodes.get(r))
+                    .map(|n| n.kind.as_str())
+            );
+        }
+    }
+
+    /// Scroll the source pane to `raw`'s position and highlight its token/span.
+    /// Called by both tree-view clicks and timeline clicks.
+    fn highlight_ast_node_in_source(&mut self, raw: usize) {
+        if raw >= self.search_ast_nodes.len() { return; }
+        let total_src = self.search_source_lines.len();
+        if total_src == 0 { return; }
+
+        let node = &self.search_ast_nodes[raw];
+
+        // Scroll source to the node's first line.
+        self.search_source_scroll    = node.source_row.min(total_src.saturating_sub(1));
+        self.search_source_highlight = node.source_row;
+
+        // Build the selection that will be highlighted in the source pane.
+        let sel = if let Some(leaf) = &node.leaf_text {
+            // Leaf: try to pinpoint the exact token within the line.
+            let leaf_clean = leaf.replace('↵', "\n").replace('→', "\t");
+            let leaf_trim  = leaf_clean.trim_matches('"');
+            self.search_source_lines
+                .get(node.source_row)
+                .and_then(|line_text| {
+                    line_text.find(leaf_trim).map(|byte_off| {
+                        let start_col = line_text[..byte_off].chars().count();
+                        let end_col   = start_col + leaf_trim.chars().count();
+                        ((node.source_row, start_col), (node.source_row, end_col))
+                    })
+                })
+                .unwrap_or_else(|| {
+                    let end = self.search_source_lines
+                        .get(node.source_row)
+                        .map(|l| l.chars().count())
+                        .unwrap_or(0);
+                    ((node.source_row, 0), (node.source_row, end))
+                })
+        } else {
+            // Non-leaf: select the full line range of this subtree.
+            let end_col = self.search_source_lines
+                .get(node.source_end_row)
+                .map(|l| l.chars().count())
+                .unwrap_or(0);
+            ((node.source_row, 0), (node.source_end_row, end_col))
+        };
+        self.search_sel = Some(sel);
+
+        // Sync tree cursor.
+        if let Some(vis_pos) = self.search_ast_visible.iter().position(|&r| r == raw) {
+            self.search_ast_cursor = vis_pos;
+        }
+
+        log::debug!(
+            "ast click: node={} L{}–{} sel={:?}",
+            node.kind, node.source_row + 1, node.source_end_row + 1, sel
+        );
     }
 
     /// Convert a screen (col, row) in terminal coordinates to a (line, char_col) pair
@@ -1320,6 +1574,12 @@ impl App {
                 self.search_prev_mode = AppMode::ProjectBrowser;
                 self.mode = AppMode::Search;
                 self.status_msg = String::from(" GREP  type text  Enter:search  Esc:back ");
+                // Pre-load the selected file so the source pane is immediately populated.
+                if let Some(path) = self.selected_project_path() {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        self.load_file_into_search_pane(&path, &content);
+                    }
+                }
             }
             KeyCode::Char('f') => {
                 log::info!("mode: ProjectBrowser → Search (ast)");
@@ -1332,6 +1592,12 @@ impl App {
                 self.status_msg = String::from(
                     " AST  fn: call: var: class: type: include: param: field:  or  (ts-query) @cap  Enter:search  Esc:back ",
                 );
+                // Pre-load the selected file so the source pane is immediately populated.
+                if let Some(path) = self.selected_project_path() {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        self.load_file_into_search_pane(&path, &content);
+                    }
+                }
             }
 
             // ── Open in TUI (Enter) ───────────────────────────────────────
@@ -1640,6 +1906,14 @@ impl App {
                 return;
             }
 
+            // ── Cycle AST visualization mode (v)
+            KeyCode::Char('v') => {
+                self.search_ast_viz = self.search_ast_viz.next();
+                self.search_ast_scroll = 0;
+                self.search_timeline_base = None; // reset zoom when switching views
+                return;
+            }
+
             // ── Back — returns to previous mode (project browser or diff)
             KeyCode::Esc => {
                 log::debug!("mode: Search → {:?}", self.search_prev_mode);
@@ -1765,6 +2039,8 @@ impl App {
         self.search_source_scroll = 0;
         self.search_source_highlight = 0;
         self.search_ast_nodes = vec![];
+        self.search_ast_visible = vec![]; // must stay in sync with nodes
+        self.search_ast_cursor = 0;
         self.search_ast_scroll = 0;
         self.search_ast_highlight = 0;
         self.search_running = true;

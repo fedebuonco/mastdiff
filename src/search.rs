@@ -73,6 +73,63 @@ const QUERY_PARAM: &str = "(parameter_declaration declarator: (identifier) @matc
 
 const QUERY_FIELD: &str = "(field_declaration declarator: (field_identifier) @match)";
 
+const QUERY_LAMBDA: &str = "(lambda_expression) @match";
+
+const QUERY_MACRO: &str = "
+(preproc_def name: (identifier) @match)
+(preproc_function_def name: (identifier) @match)
+";
+
+const QUERY_NS: &str = "
+(namespace_definition name: (identifier) @match)
+";
+
+const QUERY_OP: &str = "
+(function_definition
+  declarator: (function_declarator
+    declarator: (operator_name) @match))
+(function_definition
+  declarator: (function_declarator
+    declarator: (qualified_identifier
+      name: (operator_name) @match)))
+(function_definition
+  declarator: (pointer_declarator
+    declarator: (function_declarator
+      declarator: (operator_name) @match)))
+";
+
+const QUERY_USING: &str = "
+(using_declaration declarator: _ @match)
+";
+
+const QUERY_TPL: &str = "
+(template_declaration
+  (function_definition
+    declarator: (function_declarator
+      declarator: (identifier) @match)))
+(template_declaration
+  (function_definition
+    declarator: (function_declarator
+      declarator: (qualified_identifier
+        name: (identifier) @match))))
+(template_declaration
+  (class_specifier name: (type_identifier) @match))
+(template_declaration
+  (struct_specifier name: (type_identifier) @match))
+";
+
+const QUERY_THROW: &str = "
+(throw_statement) @match
+";
+
+const QUERY_CAST: &str = "
+(cast_expression type: _ @match)
+(static_cast_expression type: _ @match)
+(dynamic_cast_expression type: _ @match)
+(reinterpret_cast_expression type: _ @match)
+(const_cast_expression type: _ @match)
+";
+
 // ── Query model ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -132,6 +189,14 @@ pub fn parse_query(raw: &str) -> SearchQuery {
         ("include:", QUERY_INCLUDE, false),
         ("param:",   QUERY_PARAM,   false),
         ("field:",   QUERY_FIELD,   false),
+        ("lambda:",  QUERY_LAMBDA,  false),
+        ("macro:",   QUERY_MACRO,   false),
+        ("ns:",      QUERY_NS,      false),
+        ("op:",      QUERY_OP,      false),
+        ("using:",   QUERY_USING,   false),
+        ("tpl:",     QUERY_TPL,     false),
+        ("throw:",   QUERY_THROW,   false),
+        ("cast:",    QUERY_CAST,    false),
     ];
     for (prefix, ts_query, filter_nested) in shorthands {
         if let Some(rest) = trimmed.strip_prefix(prefix) {

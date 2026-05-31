@@ -29,8 +29,10 @@ pub struct AstLine {
     pub leaf_text: Option<String>,
     pub status: NodeStatus,
     pub empty: bool,
-    /// Row in the source snippet (0-indexed, relative to the snippet start)
+    /// First row in the source snippet (0-indexed, relative to the snippet start)
     pub source_row: usize,
+    /// Last row in the source snippet (inclusive, same as source_row for single-line nodes)
+    pub source_end_row: usize,
 }
 
 pub struct AstDiffResult {
@@ -78,21 +80,22 @@ pub fn parse_single(src: &str) -> Result<Vec<AstLine>> {
     let tree = parser.parse(src, None).context("Failed to parse source")?;
     Ok(flatten_tree(tree.root_node(), src)
         .into_iter()
-        .map(|(depth, kind, leaf_text, source_row)| AstLine {
+        .map(|(depth, kind, leaf_text, source_row, source_end_row)| AstLine {
             depth,
             kind,
             leaf_text,
             status: NodeStatus::Same,
             empty: false,
             source_row,
+            source_end_row,
         })
         .collect())
 }
 
 // ── Tree flattening ────────────────────────────────────────────────────────
 
-/// (depth, kind, leaf_text, source_row)
-type FlatNode = (usize, String, Option<String>, usize);
+/// (depth, kind, leaf_text, source_row, source_end_row)
+type FlatNode = (usize, String, Option<String>, usize, usize);
 
 fn flatten_tree(node: Node<'_>, src: &str) -> Vec<FlatNode> {
     let mut out = Vec::new();
@@ -113,6 +116,7 @@ fn flatten_node(node: Node<'_>, src: &str, depth: usize, out: &mut Vec<FlatNode>
 
     let kind = node.kind().to_string();
     let source_row = node.start_position().row;
+    let source_end_row = node.end_position().row;
     let leaf_text = if node.child_count() == 0 {
         src.get(node.start_byte()..node.end_byte())
             .map(|t| t.replace('\n', "↵").replace('\t', "→"))
@@ -120,7 +124,7 @@ fn flatten_node(node: Node<'_>, src: &str, depth: usize, out: &mut Vec<FlatNode>
         None
     };
 
-    out.push((depth, kind, leaf_text, source_row));
+    out.push((depth, kind, leaf_text, source_row, source_end_row));
 
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
@@ -147,7 +151,7 @@ fn key_to_ast_line(s: &str, source_row: usize, status: NodeStatus) -> AstLine {
         Some(ti) => (rest[..ti].to_string(), Some(rest[ti + 1..].to_string())),
         None => (rest.to_string(), None),
     };
-    AstLine { depth, kind, leaf_text, status, empty: false, source_row }
+    AstLine { depth, kind, leaf_text, status, empty: false, source_row, source_end_row: source_row }
 }
 
 fn diff_flat_trees(left: &[FlatNode], right: &[FlatNode]) -> (Vec<AstLine>, Vec<AstLine>) {
@@ -209,7 +213,7 @@ fn flush_ast_bufs(
             }
             n
         } else {
-            AstLine { depth: 0, kind: String::new(), leaf_text: None, status: NodeStatus::Same, empty: true, source_row: 0 }
+            AstLine { depth: 0, kind: String::new(), leaf_text: None, status: NodeStatus::Same, empty: true, source_row: 0, source_end_row: 0 }
         };
 
         let r = if i < right_buf.len() {
@@ -219,7 +223,7 @@ fn flush_ast_bufs(
             }
             n
         } else {
-            AstLine { depth: 0, kind: String::new(), leaf_text: None, status: NodeStatus::Same, empty: true, source_row: 0 }
+            AstLine { depth: 0, kind: String::new(), leaf_text: None, status: NodeStatus::Same, empty: true, source_row: 0, source_end_row: 0 }
         };
 
         left_out.push(l);

@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, SearchFocus, ROWS_PER_RESULT};
+use crate::app::{App, AstVizMode, SearchFocus, ROWS_PER_RESULT};
 use crate::syntax::SyntaxSpan;
 
 pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
@@ -39,68 +39,80 @@ pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
 // ── Search bar ────────────────────────────────────────────────────────────
 
 /// Known shorthand prefixes and the accent color to use for each.
+/// Order here matches the hint chips in the search bar title.
 const SHORTHANDS: &[(&str, Color)] = &[
-    ("fn:",      Color::Rgb(78, 201, 176)),   // teal
-    ("call:",    Color::Rgb(220, 160, 80)),   // orange
+    ("fn:",      Color::Rgb(78,  201, 176)),  // teal
+    ("call:",    Color::Rgb(220, 160,  80)),  // orange
     ("var:",     Color::Rgb(197, 134, 192)),  // purple
-    ("class:",   Color::Rgb(86, 156, 214)),   // blue
-    ("type:",    Color::Rgb(86, 156, 214)),   // blue
+    ("class:",   Color::Rgb(86,  156, 214)),  // blue
+    ("type:",    Color::Rgb(100, 180, 240)),  // light-blue
     ("include:", Color::Rgb(150, 200, 100)),  // green
     ("param:",   Color::Rgb(220, 220, 100)),  // yellow
     ("field:",   Color::Rgb(200, 140, 200)),  // lavender
+    ("lambda:",  Color::Rgb(255, 130, 160)),  // rose/pink
+    ("macro:",   Color::Rgb(210,  80,  80)),  // red
+    ("ns:",      Color::Rgb(80,  210, 220)),  // cyan
+    ("op:",      Color::Rgb(240, 180,  40)),  // amber
+    ("using:",   Color::Rgb(100, 210, 160)),  // mint
+    ("tpl:",     Color::Rgb(200, 100, 220)),  // magenta
+    ("throw:",   Color::Rgb(220, 100,  60)),  // red-orange
+    ("cast:",    Color::Rgb(180, 160, 120)),  // warm-tan
 ];
 
 fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
     let focused = app.search_focus == SearchFocus::Query;
-    let (mode_label, hint) = if app.search_grep_mode {
-        ("GREP", " type text  Tab:filters  Enter:run  Alt+R:regex  Alt+C:case  Esc:back")
-    } else {
-        ("AST ", " fn: call: var: class: type: include: param: field:  (ts-query)  Tab:filters  Enter:run  Alt+R:regex  Alt+C:case")
-    };
     let base_color = if app.search_grep_mode { Color::Yellow } else { Color::Cyan };
     let border_color = if focused { base_color } else { Color::Rgb(60, 80, 100) };
 
+    // Mode label chip
+    let mode_label = if app.search_grep_mode { "GREP" } else { "AST " };
+    let mode_span = Span::styled(
+        format!(" {} ", mode_label),
+        Style::default().fg(Color::Black).bg(base_color).add_modifier(Modifier::BOLD),
+    );
+
     // Regex toggle badge
     let regex_badge = if app.search_use_regex {
-        Span::styled(
-            " [.*] ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Rgb(200, 120, 60))
-                .add_modifier(Modifier::BOLD),
-        )
+        Span::styled(" [.*] ", Style::default().fg(Color::Black).bg(Color::Rgb(200, 120, 60)).add_modifier(Modifier::BOLD))
     } else {
         Span::styled(" [.*] ", Style::default().fg(Color::Rgb(70, 70, 90)))
     };
 
     // Case-sensitive toggle badge
     let case_badge = if app.search_case_sensitive {
-        Span::styled(
-            " [Aa] ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Rgb(80, 160, 220))
-                .add_modifier(Modifier::BOLD),
-        )
+        Span::styled(" [Aa] ", Style::default().fg(Color::Black).bg(Color::Rgb(80, 160, 220)).add_modifier(Modifier::BOLD))
     } else {
         Span::styled(" [Aa] ", Style::default().fg(Color::Rgb(70, 70, 90)))
     };
 
+    // Build title spans
+    let mut title_spans: Vec<Span> = vec![mode_span, regex_badge, case_badge];
+
+    if app.search_grep_mode {
+        title_spans.push(Span::styled(
+            "  type text  Tab:filters  Enter:run  Alt+R:regex  Alt+C:case  Esc:back",
+            Style::default().fg(Color::Rgb(80, 80, 100)),
+        ));
+    } else {
+        // Color-coded prefix chips, one per shorthand
+        title_spans.push(Span::styled(" ", Style::default()));
+        for &(prefix, color) in SHORTHANDS {
+            title_spans.push(Span::styled(
+                prefix,
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ));
+            title_spans.push(Span::raw(" "));
+        }
+        title_spans.push(Span::styled(
+            " (ts-query)  Tab:filters  Alt+R  Alt+C",
+            Style::default().fg(Color::Rgb(70, 70, 95)),
+        ));
+    }
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .title(Line::from(vec![
-            Span::styled(
-                format!(" {} ", mode_label),
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(base_color)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            regex_badge,
-            case_badge,
-            Span::styled(hint, Style::default().fg(Color::DarkGray)),
-        ]));
+        .title(Line::from(title_spans));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -647,41 +659,68 @@ fn overlay_selection(spans: Vec<Span<'static>>, sel_from: usize, sel_to: usize) 
     result
 }
 
-fn render_ast_pane(f: &mut Frame, app: &App, area: Rect) {
+fn render_ast_pane(f: &mut Frame, app: &mut App, area: Rect) {
     let browsing = app.search_results.is_empty() && !app.search_source_lines.is_empty();
-    let nav_hint = if browsing { "  ↑↓:navigate  Space:fold" } else { "" };
+    let nav_hint = if browsing && app.search_ast_viz == AstVizMode::Tree {
+        "  ↑↓:nav  Space:fold"
+    } else {
+        ""
+    };
+    let viz_label = app.search_ast_viz.label();
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
-        .title(Span::styled(
-            format!(" AST{} ", nav_hint),
-            Style::default().fg(Color::Cyan),
-        ));
+        .title(Line::from(vec![
+            Span::styled(
+                format!(" AST [{}]{} ", viz_label, nav_hint),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(" v:cycle-viz ", Style::default().fg(Color::Rgb(80, 80, 110))),
+        ]));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let view_height = inner.height as usize;
+
+    // Clamp-to-cursor only makes sense for the tree view.
+    if app.search_ast_viz == AstVizMode::Tree {
+        app.clamp_search_ast_scroll(view_height);
+    }
+    let scroll = app.search_ast_scroll;
+
+    match app.search_ast_viz {
+        AstVizMode::Tree     => render_ast_tree(f, app, inner, scroll, view_height),
+        AstVizMode::Timeline => render_ast_timeline(f, app, inner, scroll),
+    }
+}
+
+fn render_ast_tree(f: &mut Frame, app: &App, area: Rect, scroll: usize, view_height: usize) {
     let visible = &app.search_ast_visible;
     let nodes = &app.search_ast_nodes;
-    if visible.is_empty() {
+
+    log::debug!(
+        "render_ast_tree: nodes={} visible={} cursor={} scroll={}",
+        nodes.len(), visible.len(), app.search_ast_cursor, scroll
+    );
+
+    if visible.is_empty() || nodes.is_empty() {
+        log::debug!("render_ast_tree: early-return (empty nodes or visible)");
         return;
     }
 
-    // Clamp scroll so cursor stays visible.
-    let scroll = {
-        let s = app.search_ast_scroll;
-        if app.search_ast_cursor < s {
-            app.search_ast_cursor
-        } else if app.search_ast_cursor >= s + view_height && view_height > 0 {
-            app.search_ast_cursor - view_height + 1
-        } else {
-            s
-        }
-    };
+    // Safety: all raw indices in visible must point into nodes.
+    let max_raw = visible.iter().copied().max().unwrap_or(0);
+    if max_raw >= nodes.len() {
+        log::warn!(
+            "render_ast_tree: stale visible index {} >= nodes.len() {}; skipping",
+            max_raw, nodes.len()
+        );
+        return;
+    }
 
     let end = (scroll + view_height).min(visible.len());
-    let width = inner.width as usize;
+    let width = area.width as usize;
 
     let lines: Vec<Line> = visible[scroll..end]
         .iter()
@@ -698,9 +737,185 @@ fn render_ast_pane(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    f.render_widget(Paragraph::new(lines), inner);
+    f.render_widget(Paragraph::new(lines), area);
 }
 
+// ── Timeline (Gantt swimlane) ────────────────────────────────────────────────
+
+fn render_ast_timeline(f: &mut Frame, app: &App, area: Rect, depth_scroll: usize) {
+    let nodes = &app.search_ast_nodes;
+    let non_empty: Vec<(usize, &crate::ast_diff::AstLine)> = nodes.iter()
+        .enumerate()
+        .filter(|(_, n)| !n.empty && !n.kind.is_empty())
+        .collect();
+    if non_empty.is_empty() { return; }
+
+    let width  = area.width  as usize;
+    let height = area.height as usize;
+
+    let cursor_raw = app.search_ast_visible.get(app.search_ast_cursor).copied().unwrap_or(usize::MAX);
+    let match_raw  = app.search_ast_highlight;
+
+    // ── Zoom base ─────────────────────────────────────────────────────────────
+    // When a base node is set (via double-click), we restrict the view to its
+    // subtree and rescale the X axis to its source span.
+    let (min_row, max_row, base_depth, base_kind) =
+        if let Some(br) = app.search_timeline_base.filter(|&br| br < nodes.len()) {
+            let n = &nodes[br];
+            (n.source_row, n.source_end_row, n.depth, n.kind.as_str())
+        } else {
+            let mn = non_empty.iter().map(|(_, n)| n.source_row).min().unwrap_or(0);
+            let mx = non_empty.iter().map(|(_, n)| n.source_end_row).max().unwrap_or(0);
+            (mn, mx, 0, "")
+        };
+    let total_span = (max_row - min_row + 1).max(1);
+
+    // When zoomed, only show nodes that fall within the base's span.
+    let visible_nodes: Vec<(usize, &crate::ast_diff::AstLine)> =
+        if app.search_timeline_base.is_some() {
+            non_empty.iter()
+                .filter(|(_, n)| {
+                    n.depth >= base_depth
+                        && n.source_row >= min_row
+                        && n.source_end_row <= max_row
+                })
+                .map(|&(i, n)| (i, n))
+                .collect()
+        } else {
+            non_empty.clone()
+        };
+
+    let max_depth = visible_nodes.iter().map(|(_, n)| n.depth).max().unwrap_or(0);
+
+    // Label column: "d99 " = 4 chars.
+    let label_w = 4usize;
+    let chart_w = width.saturating_sub(label_w);
+
+    let scale = |row: usize| -> usize {
+        ((row.saturating_sub(min_row)) * chart_w / total_span).min(chart_w)
+    };
+
+    let mut lines: Vec<Line> = Vec::with_capacity(height);
+
+    // ── Header row ────────────────────────────────────────────────────────────
+    {
+        let mut ruler = vec![b' '; chart_w];
+        let step = (total_span / (chart_w / 8).max(1)).max(1);
+        let mut src = min_row;
+        while src <= max_row {
+            let col = scale(src);
+            let label = format!("{}", src + 1);
+            for (i, ch) in label.bytes().enumerate() {
+                if col + i < chart_w { ruler[col + i] = ch; }
+            }
+            src += step;
+        }
+        let ruler_str = String::from_utf8_lossy(&ruler).into_owned();
+
+        // If zoomed, show the base node kind as a breadcrumb instead of "src".
+        let hdr_label = if !base_kind.is_empty() {
+            let bc = format!(" ↳ {} ", base_kind);
+            let bc_trimmed: String = bc.chars().take(label_w + 8).collect();
+            Span::styled(bc_trimmed, Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(80, 130, 200))
+                .add_modifier(Modifier::BOLD))
+        } else {
+            Span::styled(
+                format!("{:>width$}", "src", width = label_w),
+                Style::default().fg(Color::Rgb(80, 80, 110)),
+            )
+        };
+        lines.push(Line::from(vec![
+            hdr_label,
+            Span::styled(ruler_str, Style::default().fg(Color::Rgb(70, 70, 100))),
+        ]));
+    }
+
+    // ── One swimlane per depth level ──────────────────────────────────────────
+    // When zoomed, depth labels are shown relative to the base (d0 = base depth).
+    let depth_start = base_depth + depth_scroll;
+    let depth_end   = (depth_start + height.saturating_sub(2)).min(max_depth);
+
+    for depth in depth_start..=depth_end {
+        if lines.len() >= height { break; }
+
+        let mut cells:  Vec<u8>    = vec![b' '; chart_w];
+        let mut colors: Vec<Color> = vec![Color::Reset; chart_w];
+        let mut bolds:  Vec<bool>  = vec![false; chart_w];
+
+        let mut depth_nodes: Vec<(usize, &crate::ast_diff::AstLine)> = visible_nodes
+            .iter()
+            .filter(|(_, n)| n.depth == depth)
+            .map(|&(i, n)| (i, n))
+            .collect();
+        depth_nodes.sort_by_key(|(_, n)| n.source_row);
+
+        for (raw_idx, node) in &depth_nodes {
+            let x0 = scale(node.source_row);
+            let x1 = scale(node.source_end_row + 1).max(x0 + 1).min(chart_w);
+
+            let is_cursor = *raw_idx == cursor_raw;
+            let is_match  = *raw_idx == match_raw;
+            let is_base   = app.search_timeline_base == Some(*raw_idx);
+            let col = if is_base                   { Color::Rgb(80, 200, 120) }  // green = current zoom root
+                      else if is_cursor && is_match { Color::Rgb(255, 220, 50) }
+                      else if is_cursor             { Color::Rgb(120, 180, 255) }
+                      else if is_match              { Color::Rgb(220, 160, 40) }
+                      else                          { ast_kind_color(&node.kind) };
+
+            if x0 < chart_w { cells[x0] = b'['; colors[x0] = col; bolds[x0] = is_base || is_cursor; }
+            let label_bytes: Vec<u8> = node.kind.bytes().collect();
+            for x in (x0 + 1)..x1.saturating_sub(1).min(chart_w) {
+                let li = x - x0 - 1;
+                cells[x]  = if li < label_bytes.len() { label_bytes[li] } else { b'-' };
+                colors[x] = col;
+                bolds[x]  = is_base || is_cursor;
+            }
+            let xr = x1.saturating_sub(1);
+            if xr > x0 && xr < chart_w {
+                cells[xr] = b']'; colors[xr] = col; bolds[xr] = is_base || is_cursor;
+            }
+        }
+
+        // Depth label: relative to base when zoomed.
+        let rel_depth = depth - base_depth;
+        let depth_lbl = Span::styled(
+            format!("d{:<width$}", rel_depth, width = label_w.saturating_sub(1)),
+            Style::default().fg(if rel_depth == 0 && app.search_timeline_base.is_some() {
+                Color::Rgb(80, 200, 120) // base row label in green
+            } else {
+                Color::Rgb(90, 90, 130)
+            }),
+        );
+
+        let mut spans: Vec<Span> = vec![depth_lbl];
+        let mut i = 0;
+        while i < chart_w {
+            let col   = colors[i];
+            let bold  = bolds[i];
+            let start = i;
+            while i < chart_w && colors[i] == col && bolds[i] == bold { i += 1; }
+            let text: String = cells[start..i].iter().map(|&b| b as char).collect();
+            if col == Color::Reset {
+                spans.push(Span::raw(text));
+            } else {
+                let mut sty = Style::default().fg(col);
+                if bold { sty = sty.add_modifier(Modifier::BOLD); }
+                spans.push(Span::styled(text, sty));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+
+    while lines.len() < height {
+        lines.push(Line::raw(""));
+    }
+
+    f.render_widget(Paragraph::new(lines), area);
+}
+
+/// Darken a color for use as a block background in the icicle view.
 /// Compute the tree-line prefix for the node at `vis_pos` in the visible list.
 /// Returns something like "│  ├─ " or "   └─ ".
 fn tree_prefix(nodes: &[crate::ast_diff::AstLine], visible: &[usize], vis_pos: usize) -> String {
@@ -747,6 +962,13 @@ fn render_ast_tree_node(
     has_children: bool,
     width: usize,
 ) -> Line<'static> {
+    if raw >= nodes.len() {
+        log::error!(
+            "render_ast_tree_node: raw={} out of bounds (nodes.len={}), vis_pos={}, visible.len={}",
+            raw, nodes.len(), vis_pos, visible.len()
+        );
+        return Line::raw(format!("  <invalid node {}>", raw));
+    }
     let node = &nodes[raw];
 
     let tree_pfx = tree_prefix(nodes, visible, vis_pos);
