@@ -174,7 +174,10 @@ pub struct App {
     pub search_source_highlight: usize, // line to highlight (abs line in file)
     pub search_ast_nodes: Vec<AstLine>,
     pub search_ast_scroll: usize,
-    pub search_ast_highlight: usize,  // index in search_ast_nodes to highlight
+    pub search_ast_highlight: usize,  // raw index into search_ast_nodes (result match)
+    pub search_ast_collapsed: HashSet<usize>, // raw indices of collapsed nodes
+    pub search_ast_visible: Vec<usize>,       // visible raw indices (after collapsing)
+    pub search_ast_cursor: usize,             // cursor in search_ast_visible (interactive nav)
     pub search_prev_mode: AppMode,    // mode to return to on Esc
 
     // ---- help overlay
@@ -281,7 +284,10 @@ impl App {
             search_source_highlight: 0,
             search_ast_nodes: vec![],
             search_ast_scroll: 0,
-            search_ast_highlight: 0,
+            search_ast_highlight: usize::MAX,
+            search_ast_collapsed: HashSet::new(),
+            search_ast_visible: vec![],
+            search_ast_cursor: 0,
             search_prev_mode: AppMode::TextDiff,
             help_prev_mode: AppMode::TextDiff,
             should_quit: false,
@@ -404,7 +410,10 @@ impl App {
             search_source_highlight: 0,
             search_ast_nodes: vec![],
             search_ast_scroll: 0,
-            search_ast_highlight: 0,
+            search_ast_highlight: usize::MAX,
+            search_ast_collapsed: HashSet::new(),
+            search_ast_visible: vec![],
+            search_ast_cursor: 0,
             search_prev_mode: AppMode::ProjectBrowser,
             help_prev_mode: AppMode::ProjectBrowser,
             should_quit: false,
@@ -483,10 +492,20 @@ impl App {
         self.search_source_lines = content.lines().map(|l| l.to_string()).collect();
         self.search_source_tokens = crate::syntax::highlight(content);
         self.search_ast_nodes = parse_single(content).unwrap_or_default();
+        self.search_ast_collapsed = HashSet::new();
         self.search_source_scroll = 0;
         self.search_source_highlight = usize::MAX; // no highlight when just browsing
         self.search_ast_scroll = 0;
         self.search_ast_highlight = usize::MAX;
+        self.search_ast_cursor = 0;
+        self.rebuild_search_ast_visible();
+    }
+
+    /// Recompute `search_ast_visible` from the current nodes + collapsed set.
+    pub fn rebuild_search_ast_visible(&mut self) {
+        let dummy: Vec<AstLine> = vec![];
+        self.search_ast_visible =
+            visible_rows(&self.search_ast_nodes, &dummy, &self.search_ast_collapsed);
     }
 
     // ── Scroll clamping (called by renderer) ──────────────────────────────
@@ -1464,6 +1483,25 @@ impl App {
 
     // ── Search mode ───────────────────────────────────────────────────────
 
+    /// Move the AST cursor by `delta` rows (negative = up) and sync the source pane.
+    fn ast_cursor_move(&mut self, delta: i64) {
+        let vis_len = self.search_ast_visible.len();
+        if vis_len == 0 { return; }
+        let new_cursor = (self.search_ast_cursor as i64 + delta)
+            .clamp(0, (vis_len as i64) - 1) as usize;
+        self.search_ast_cursor = new_cursor;
+
+        // Sync source pane to the node's source line.
+        if let Some(&raw) = self.search_ast_visible.get(new_cursor) {
+            if let Some(node) = self.search_ast_nodes.get(raw) {
+                let row = node.source_row;
+                self.search_source_highlight = row;
+                // Keep the highlighted line near the middle of the source pane.
+                self.search_source_scroll = row.saturating_sub(5);
+            }
+        }
+    }
+
     /// Arm the 300 ms debounce timer. Called whenever the user mutates a search
     /// input field so that a search fires automatically after a short pause.
     fn nudge_search_debounce(&mut self) {
@@ -1480,30 +1518,68 @@ impl App {
                 return;
             }
 
-            // ── Navigate results (only when query box has focus)
+            // ── Navigate results OR AST (only when query box has focus)
             KeyCode::Up if self.search_focus == SearchFocus::Query => {
-                if self.search_selected > 0 {
-                    self.search_selected -= 1;
-                    self.load_search_result(self.search_selected);
+                if !self.search_results.is_empty() {
+                    if self.search_selected > 0 {
+                        self.search_selected -= 1;
+                        self.load_search_result(self.search_selected);
+                    }
+                } else {
+                    self.ast_cursor_move(-1);
                 }
                 return;
             }
             KeyCode::Down if self.search_focus == SearchFocus::Query => {
-                if self.search_selected + 1 < self.search_results.len() {
-                    self.search_selected += 1;
-                    self.load_search_result(self.search_selected);
+                if !self.search_results.is_empty() {
+                    if self.search_selected + 1 < self.search_results.len() {
+                        self.search_selected += 1;
+                        self.load_search_result(self.search_selected);
+                    }
+                } else {
+                    self.ast_cursor_move(1);
                 }
                 return;
             }
             KeyCode::PageUp if self.search_focus == SearchFocus::Query => {
-                self.search_selected = self.search_selected.saturating_sub(10);
-                self.load_search_result(self.search_selected);
+                if !self.search_results.is_empty() {
+                    self.search_selected = self.search_selected.saturating_sub(10);
+                    self.load_search_result(self.search_selected);
+                } else {
+                    self.ast_cursor_move(-10);
+                }
                 return;
             }
             KeyCode::PageDown if self.search_focus == SearchFocus::Query => {
-                let n = self.search_results.len();
-                self.search_selected = (self.search_selected + 10).min(n.saturating_sub(1));
-                self.load_search_result(self.search_selected);
+                if !self.search_results.is_empty() {
+                    let n = self.search_results.len();
+                    self.search_selected = (self.search_selected + 10).min(n.saturating_sub(1));
+                    self.load_search_result(self.search_selected);
+                } else {
+                    self.ast_cursor_move(10);
+                }
+                return;
+            }
+
+            // ── Fold / unfold AST node (file-browse mode, no results)
+            KeyCode::Char(' ') if self.search_results.is_empty()
+                               && !self.search_source_lines.is_empty() => {
+                if let Some(&raw) = self.search_ast_visible.get(self.search_ast_cursor) {
+                    let dummy: Vec<AstLine> = vec![];
+                    if row_has_children(raw, &self.search_ast_nodes, &dummy) {
+                        if self.search_ast_collapsed.contains(&raw) {
+                            self.search_ast_collapsed.remove(&raw);
+                        } else {
+                            self.search_ast_collapsed.insert(raw);
+                        }
+                        self.rebuild_search_ast_visible();
+                        // Keep cursor in bounds after rebuild.
+                        let vis_len = self.search_ast_visible.len();
+                        if self.search_ast_cursor >= vis_len && vis_len > 0 {
+                            self.search_ast_cursor = vis_len - 1;
+                        }
+                    }
+                }
                 return;
             }
 
@@ -1850,7 +1926,15 @@ impl App {
 
         self.search_ast_nodes = nodes;
         self.search_ast_highlight = highlight;
-        self.search_ast_scroll = highlight.saturating_sub(5);
+        // Reset collapsed state so the highlighted node is always visible.
+        self.search_ast_collapsed = HashSet::new();
+        self.rebuild_search_ast_visible();
+        // Place cursor on the highlighted node.
+        self.search_ast_cursor = self.search_ast_visible
+            .iter()
+            .position(|&r| r == highlight)
+            .unwrap_or(0);
+        self.search_ast_scroll = self.search_ast_cursor.saturating_sub(5);
     }
 
 }

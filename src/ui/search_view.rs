@@ -7,7 +7,6 @@ use ratatui::{
 };
 
 use crate::app::{App, SearchFocus, ROWS_PER_RESULT};
-use crate::ast_diff::AstLine;
 use crate::syntax::SyntaxSpan;
 
 pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
@@ -649,54 +648,204 @@ fn overlay_selection(spans: Vec<Span<'static>>, sel_from: usize, sel_to: usize) 
 }
 
 fn render_ast_pane(f: &mut Frame, app: &App, area: Rect) {
+    let browsing = app.search_results.is_empty() && !app.search_source_lines.is_empty();
+    let nav_hint = if browsing { "  ↑↓:navigate  Space:fold" } else { "" };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
-        .title(Span::styled(" AST ", Style::default().fg(Color::Cyan)));
+        .title(Span::styled(
+            format!(" AST{} ", nav_hint),
+            Style::default().fg(Color::Cyan),
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let view_height = inner.height as usize;
+    let visible = &app.search_ast_visible;
     let nodes = &app.search_ast_nodes;
-    let scroll = app.search_ast_scroll.min(nodes.len());
-    let end = (scroll + view_height).min(nodes.len());
+    if visible.is_empty() {
+        return;
+    }
+
+    // Clamp scroll so cursor stays visible.
+    let scroll = {
+        let s = app.search_ast_scroll;
+        if app.search_ast_cursor < s {
+            app.search_ast_cursor
+        } else if app.search_ast_cursor >= s + view_height && view_height > 0 {
+            app.search_ast_cursor - view_height + 1
+        } else {
+            s
+        }
+    };
+
+    let end = (scroll + view_height).min(visible.len());
     let width = inner.width as usize;
 
-    let lines: Vec<Line> = nodes[scroll..end]
+    let lines: Vec<Line> = visible[scroll..end]
         .iter()
         .enumerate()
-        .map(|(i, node)| render_ast_node(node, scroll + i == app.search_ast_highlight, width))
+        .map(|(i, &raw)| {
+            let vis_pos = scroll + i;
+            let is_cursor   = vis_pos == app.search_ast_cursor;
+            let is_match    = raw == app.search_ast_highlight;
+            let collapsed   = app.search_ast_collapsed.contains(&raw);
+            let dummy: Vec<crate::ast_diff::AstLine> = vec![];
+            let has_children = crate::ast_diff::row_has_children(raw, nodes, &dummy);
+            render_ast_tree_node(nodes, visible, vis_pos, raw, is_cursor, is_match,
+                                 collapsed, has_children, width)
+        })
         .collect();
 
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn render_ast_node(node: &AstLine, is_highlight: bool, width: usize) -> Line<'static> {
-    let indent = "  ".repeat(node.depth);
+/// Compute the tree-line prefix for the node at `vis_pos` in the visible list.
+/// Returns something like "│  ├─ " or "   └─ ".
+fn tree_prefix(nodes: &[crate::ast_diff::AstLine], visible: &[usize], vis_pos: usize) -> String {
+    let depth = nodes[visible[vis_pos]].depth;
+    if depth == 0 {
+        return String::new();
+    }
+
+    // For each depth level d (0 … depth-1), determine whether the ancestor at
+    // that level still has more siblings coming (i.e. we need a │ continuation).
+    let mut prefix = String::new();
+    for d in 0..depth {
+        // Scan forward from vis_pos to see if there's any node at depth d before
+        // depth < d (which would indicate the ancestor at d still has a sibling).
+        let has_continuation = visible[vis_pos + 1..]
+            .iter()
+            .find_map(|&r| {
+                match nodes[r].depth.cmp(&d) {
+                    std::cmp::Ordering::Equal   => Some(true),
+                    std::cmp::Ordering::Less    => Some(false),
+                    std::cmp::Ordering::Greater => None,
+                }
+            })
+            .unwrap_or(false);
+
+        if d < depth - 1 {
+            prefix.push_str(if has_continuation { "│  " } else { "   " });
+        } else {
+            prefix.push_str(if has_continuation { "├─ " } else { "└─ " });
+        }
+    }
+    prefix
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_ast_tree_node(
+    nodes: &[crate::ast_diff::AstLine],
+    visible: &[usize],
+    vis_pos: usize,
+    raw: usize,
+    is_cursor: bool,
+    is_match: bool,
+    collapsed: bool,
+    has_children: bool,
+    width: usize,
+) -> Line<'static> {
+    let node = &nodes[raw];
+
+    let tree_pfx = tree_prefix(nodes, visible, vis_pos);
+
+    // Fold icon (only for nodes with children).
+    let fold_icon = if has_children {
+        if collapsed { "▶ " } else { "▼ " }
+    } else {
+        "  "
+    };
+
     let text_part = node
         .leaf_text
         .as_ref()
-        .map(|t| format!(" \"{}\"", trunc(t, 20)))
+        .map(|t| format!(" \"{}\"", trunc(t, 18)))
         .unwrap_or_default();
-    let row_tag = format!(":L{}", node.source_row + 1);
-    let content = trunc(&format!("{}{}{}{}", indent, node.kind, text_part, row_tag), width);
+    let row_tag = format!(" :L{}", node.source_row + 1);
 
-    if is_highlight {
+    let kind_color = ast_kind_color(&node.kind);
+
+    if is_cursor && is_match {
+        // Cursor + result match: bright yellow background
+        let content = trunc(
+            &format!("{}{}{}{}{}", tree_pfx, fold_icon, node.kind, text_part, row_tag),
+            width,
+        );
         Line::from(vec![Span::styled(
-            format!("● {}", content),
+            content,
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(255, 220, 50))
+                .add_modifier(Modifier::BOLD),
+        )])
+    } else if is_cursor {
+        // Cursor (no match): blue-ish highlight
+        let pfx_len = tree_pfx.chars().count();
+        let pfx_span = Span::styled(
+            tree_pfx,
+            Style::default().fg(Color::Rgb(80, 100, 140)).bg(Color::Rgb(30, 45, 80)),
+        );
+        let fold_span = Span::styled(
+            fold_icon,
+            Style::default().fg(Color::Rgb(150, 200, 255)).bg(Color::Rgb(30, 45, 80)),
+        );
+        let rest = trunc(&format!("{}{}{}", node.kind, text_part, row_tag), width.saturating_sub(pfx_len + 2));
+        let rest_span = Span::styled(
+            rest,
+            Style::default()
+                .fg(Color::White)
+                .bg(Color::Rgb(30, 45, 80))
+                .add_modifier(Modifier::BOLD),
+        );
+        Line::from(vec![pfx_span, fold_span, rest_span])
+    } else if is_match {
+        // Result match (not cursor): amber glow
+        let content = trunc(
+            &format!("{}{}{}{}{}", tree_pfx, fold_icon, node.kind, text_part, row_tag),
+            width,
+        );
+        Line::from(vec![Span::styled(
+            content,
             Style::default()
                 .fg(Color::Rgb(255, 220, 50))
                 .bg(Color::Rgb(50, 40, 0))
                 .add_modifier(Modifier::BOLD),
         )])
     } else {
-        let color = match node.kind.as_str() {
-            k if k.contains("function") => Color::Rgb(100, 160, 255),
-            k if k.contains("class") || k.contains("struct") => Color::Rgb(220, 180, 80),
-            k if k.contains("identifier") => Color::Rgb(180, 180, 200),
-            _ => Color::Rgb(140, 140, 160),
-        };
-        Line::styled(format!("  {}", content), Style::default().fg(color))
+        // Normal node: dim tree lines, colored kind.
+        let pfx_span   = Span::styled(tree_pfx,  Style::default().fg(Color::Rgb(60, 70, 90)));
+        let fold_span  = Span::styled(fold_icon, Style::default().fg(Color::Rgb(120, 140, 170)));
+        let kind_width = width.saturating_sub(
+            nodes[raw].depth * 3 + 2 // approximate prefix+icon width
+        );
+        let kind_str   = trunc(&node.kind, kind_width);
+        let kind_span  = Span::styled(kind_str,  Style::default().fg(kind_color));
+        let meta_str   = trunc(&format!("{}{}", text_part, row_tag),
+                               width.saturating_sub(kind_width));
+        let meta_span  = Span::styled(meta_str, Style::default().fg(Color::Rgb(90, 100, 120)));
+        Line::from(vec![pfx_span, fold_span, kind_span, meta_span])
+    }
+}
+
+fn ast_kind_color(kind: &str) -> Color {
+    if kind.contains("function") || kind.contains("method") {
+        Color::Rgb(100, 180, 255)  // blue
+    } else if kind.contains("class") || kind.contains("struct") || kind.contains("enum") {
+        Color::Rgb(220, 180, 80)   // yellow
+    } else if kind.contains("declaration") || kind.contains("parameter") {
+        Color::Rgb(100, 220, 150)  // green
+    } else if kind.contains("comment") {
+        Color::Rgb(90, 110, 90)    // muted green
+    } else if kind.contains("string") || kind.contains("number") || kind.contains("literal") {
+        Color::Rgb(200, 140, 100)  // orange
+    } else if kind.contains("identifier") || kind.contains("name") || kind.contains("type") {
+        Color::Rgb(180, 180, 210)  // light purple
+    } else if kind.contains("operator") || kind.contains("punctuation") {
+        Color::Rgb(130, 130, 150)  // gray
+    } else {
+        Color::Rgb(150, 155, 175)  // default
     }
 }
 
