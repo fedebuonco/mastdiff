@@ -383,7 +383,7 @@ impl App {
             help_prev_mode: AppMode::SingleFile,
             should_quit: false,
             status_msg: String::from(
-                " q:quit  j/k:scroll  s/e:select  Enter:AST of selection  Space:fold  f:filter ",
+                " j/k:scroll  g:grep  f:ast-search  s/e:select  Enter:AST  Space:fold  F:filter  q:quit ",
             ),
             config,
             pending_open: None,
@@ -545,7 +545,7 @@ impl App {
         self.single_filter = AstFilter::All;
         self.mode = AppMode::SingleFile;
         self.status_msg = String::from(
-            " Esc:back  j/k:scroll  s/e:select  Enter:AST  Space:fold  f:filter  Ctrl+o:editor ",
+            " Esc:back  j/k:scroll  g:grep  f:ast-search  s/e:select  Enter:AST  Space:fold  F:filter  Ctrl+o:editor ",
         );
     }
 
@@ -979,7 +979,7 @@ impl App {
                 self.scroll = self.scroll.saturating_sub(20);
             }
             KeyCode::PageDown => self.cursor = (self.cursor + 20).min(total.saturating_sub(1)),
-            KeyCode::Home | KeyCode::Char('g') => {
+            KeyCode::Home => {
                 self.cursor = 0;
                 self.scroll = 0;
             }
@@ -1042,11 +1042,15 @@ impl App {
                     self.single_filter_rows = self.single_visible.clone();
                     self.single_scroll = 0;
                     self.single_cursor = 0;
-                    let back = if !self.project_files.is_empty() { "Esc:back  " } else { "q:quit  " };
-                    self.status_msg = format!(
-                        " {}j/k:scroll  s/e:select  Enter:AST  Space:fold  f:filter ",
-                        back
-                    );
+                    if !self.project_files.is_empty() {
+                        self.status_msg = String::from(
+                            " Esc:back  j/k:scroll  g:grep  f:ast-search  s/e:select  Enter:AST  Space:fold  F:filter  Ctrl+o:editor ",
+                        );
+                    } else {
+                        self.status_msg = String::from(
+                            " j/k:scroll  g:grep  f:ast-search  s/e:select  Enter:AST  Space:fold  F:filter  q:quit ",
+                        );
+                    }
                 } else if !self.project_files.is_empty() {
                     // Second Esc (nothing to clear): return to project browser
                     log::info!("mode: SingleFile → ProjectBrowser");
@@ -1084,14 +1088,40 @@ impl App {
                 }
             }
 
-            // ── Filter
+            // ── Search (g=grep, f=AST tree-sitter query) ─────────────────
+            KeyCode::Char('g') => {
+                log::info!("mode: SingleFile → Search (grep)");
+                self.search_input.clear();
+                self.search_results.clear();
+                self.search_selected = 0;
+                self.search_grep_mode = true;
+                self.search_prev_mode = AppMode::SingleFile;
+                self.mode = AppMode::Search;
+                self.status_msg = String::from(
+                    " GREP  type text — results stream live  Enter:search  Esc:back ",
+                );
+            }
             KeyCode::Char('f') => {
+                log::info!("mode: SingleFile → Search (ast)");
+                self.search_input.clear();
+                self.search_results.clear();
+                self.search_selected = 0;
+                self.search_grep_mode = false;
+                self.search_prev_mode = AppMode::SingleFile;
+                self.mode = AppMode::Search;
+                self.status_msg = String::from(
+                    " AST  fn: call: var: class: type: include: param: field:  or  (ts-query) @cap  Esc:back ",
+                );
+            }
+
+            // ── AST node-type filter (Shift+F = cycle all→functions→classes→variables)
+            KeyCode::Char('F') => {
                 self.single_filter = self.single_filter.next();
                 self.rebuild_single_visible();
                 self.single_cursor = 0;
                 self.single_scroll = 0;
                 self.status_msg =
-                    format!(" AST filter: {} ", self.single_filter.label());
+                    format!(" AST filter: {}  (Shift+F to cycle) ", self.single_filter.label());
             }
 
             // ── Open in external editor
@@ -1874,32 +1904,38 @@ impl App {
             q
         };
 
-        // Apply include / exclude path filters (VS Code-style glob patterns).
-        let include = FileFilter::parse(self.search_include.as_str());
-        let exclude = FileFilter::parse(self.search_exclude.as_str());
-        let project_root = self.left_path.trim_end_matches('/').to_string();
-
-        let file_paths: Vec<String> = self
-            .project_files
-            .iter()
-            .map(|tu| tu.file_path.clone())
-            .filter(|path| {
-                // Match against the relative path inside the project root so that
-                // patterns like `src/**` work without requiring the full absolute path.
-                let rel = path
-                    .strip_prefix(&format!("{}/", project_root))
-                    .or_else(|| path.strip_prefix(&project_root))
-                    .unwrap_or(path.as_str());
-                let pass_include = include.is_empty() || include.matches(rel) || include.matches(path);
-                let pass_exclude = exclude.is_empty() || (!exclude.matches(rel) && !exclude.matches(path));
-                pass_include && pass_exclude
-            })
-            .collect();
+        // Build the list of files to search.
+        // In single-file mode (no project loaded) search only the open file;
+        // in project mode apply the VS Code-style include/exclude glob filters.
+        let file_paths: Vec<String> = if self.project_files.is_empty() {
+            // Single-file or diff mode — scope search to the currently open file.
+            vec![self.left_path.clone()]
+        } else {
+            let include = FileFilter::parse(self.search_include.as_str());
+            let exclude = FileFilter::parse(self.search_exclude.as_str());
+            let project_root = self.left_path.trim_end_matches('/').to_string();
+            self.project_files
+                .iter()
+                .map(|tu| tu.file_path.clone())
+                .filter(|path| {
+                    // Match against the relative path inside the project root so that
+                    // patterns like `src/**` work without requiring the full absolute path.
+                    let rel = path
+                        .strip_prefix(&format!("{}/", project_root))
+                        .or_else(|| path.strip_prefix(&project_root))
+                        .unwrap_or(path.as_str());
+                    let pass_include = include.is_empty() || include.matches(rel) || include.matches(path);
+                    let pass_exclude = exclude.is_empty() || (!exclude.matches(rel) && !exclude.matches(path));
+                    pass_include && pass_exclude
+                })
+                .collect()
+        };
 
         let n_files = file_paths.len();
         log::info!(
             "run_search: {}/{} files after include={:?} exclude={:?}",
-            n_files, self.project_files.len(),
+            n_files,
+            if self.project_files.is_empty() { 1 } else { self.project_files.len() },
             self.search_include.as_str(), self.search_exclude.as_str()
         );
 

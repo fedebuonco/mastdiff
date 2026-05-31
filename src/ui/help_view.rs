@@ -110,9 +110,13 @@ fn right_column() -> Vec<Line<'static>> {
     blank(&mut lines);
 
     section(&mut lines, "AST / SINGLE-FILE VIEW");
-    row(&mut lines, "j / k  ↑↓",     "scroll");
-    row(&mut lines, "Space",          "collapse / expand node");
-    row(&mut lines, "f",              "cycle filter (all / functions / classes / vars)");
+    row(&mut lines, "j / k  ↑↓",     "scroll source");
+    row(&mut lines, "g",              "grep search in this file");
+    row(&mut lines, "f",              "AST / tree-sitter search in this file");
+    row(&mut lines, "s / e + Enter",  "select line range → zoom AST to slice");
+    row(&mut lines, "Space",          "collapse / expand AST node");
+    row(&mut lines, "Shift+F",        "cycle AST filter (all / functions / classes / vars)");
+    row(&mut lines, "Esc",            "clear selection / zoom  (or back to project)");
     row(&mut lines, "Ctrl+o",         "open current line in external editor");
     blank(&mut lines);
 

@@ -27,7 +27,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(Color::Cyan))
         .title(Span::styled(
             format!(
-                " AST — {} [{}] ",
+                " AST — {} [{}]  Shift+F:cycle filter ",
                 short_name(&app.left_path),
                 app.single_filter.label()
             ),
