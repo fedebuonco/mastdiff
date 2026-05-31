@@ -222,6 +222,8 @@ pub struct App {
     pub search_rx: Option<mpsc::Receiver<Vec<SearchResult>>>,
     /// Set to `true` to ask a running search to stop early.
     pub search_cancel: Arc<AtomicBool>,
+    /// When set, fire a new search after this instant + 300 ms debounce.
+    pub search_debounce: Option<std::time::Instant>,
 }
 
 impl App {
@@ -308,6 +310,7 @@ impl App {
             search_running: false,
             search_rx: None,
             search_cancel: Arc::new(AtomicBool::new(false)),
+            search_debounce: None,
         }
     }
 
@@ -394,6 +397,7 @@ impl App {
             search_running: false,
             search_rx: None,
             search_cancel: Arc::new(AtomicBool::new(false)),
+            search_debounce: None,
         }
     }
 
@@ -486,6 +490,7 @@ impl App {
             search_running: false,
             search_rx: None,
             search_cancel: Arc::new(AtomicBool::new(false)),
+            search_debounce: None,
         }
     }
 
@@ -1703,11 +1708,21 @@ impl App {
 
     // ── Search mode ───────────────────────────────────────────────────────
 
+    /// Arm the 300 ms debounce timer. Called whenever the user mutates a search
+    /// input field so that a search fires automatically after a short pause.
+    fn nudge_search_debounce(&mut self) {
+        self.search_debounce = Some(std::time::Instant::now());
+    }
+
     fn on_search(&mut self, key: KeyEvent) {
         // Global keys that work regardless of which input has focus.
         match key.code {
-            // ── Run search (any focus)
-            KeyCode::Enter => { self.run_search(); return; }
+            // ── Run search immediately (any focus) — also clears debounce
+            KeyCode::Enter => {
+                self.search_debounce = None;
+                self.run_search();
+                return;
+            }
 
             // ── Navigate results (only when query box has focus)
             KeyCode::Up if self.search_focus == SearchFocus::Query => {
@@ -1767,14 +1782,10 @@ impl App {
                 return;
             }
 
-            // ── Toggle regex mode (Alt+R)
+            // ── Toggle regex mode (Alt+R) — retriggers search automatically
             KeyCode::Char('r') if key.modifiers == KeyModifiers::ALT => {
                 self.search_use_regex = !self.search_use_regex;
-                self.status_msg = if self.search_use_regex {
-                    String::from(" Regex ON — re-run search to apply ")
-                } else {
-                    String::from(" Regex OFF — re-run search to apply ")
-                };
+                self.nudge_search_debounce();
                 return;
             }
 
@@ -1809,6 +1820,11 @@ impl App {
             SearchFocus::Exclude => &mut self.search_exclude,
         };
 
+        // Track whether the key can mutate the text content (not just move the cursor).
+        let mutates = matches!(key.code,
+            KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete
+        ) || (key.code == KeyCode::Char('k') && key.modifiers == KeyModifiers::CONTROL);
+
         match key.code {
             KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE
                              || key.modifiers == KeyModifiers::SHIFT => {
@@ -1824,6 +1840,13 @@ impl App {
             KeyCode::Char('e') if key.modifiers == KeyModifiers::CONTROL => { input.move_end(); }
             KeyCode::Char('k') if key.modifiers == KeyModifiers::CONTROL => { input.kill_to_end(); }
             _ => {}
+        }
+        // input borrow ends here — safe to call &mut self methods below.
+
+        // Re-arm the debounce whenever a key that can change the query text is pressed.
+        // Pure cursor movements (Left/Right/Home/End/Ctrl+A/E) don't retrigger.
+        if mutates {
+            self.nudge_search_debounce();
         }
     }
 
@@ -1918,6 +1941,25 @@ impl App {
     /// Drain pending result batches from the background search thread.
     /// Call once per main-loop tick (≈ every 50 ms).
     pub fn tick_search(&mut self) {
+        // ── Debounce: fire a new search 300 ms after the last keystroke ────
+        if let Some(t) = self.search_debounce {
+            if t.elapsed() >= std::time::Duration::from_millis(300) {
+                self.search_debounce = None;
+                if self.search_input.as_str().is_empty() {
+                    // Query was cleared — cancel any running search and wipe results.
+                    self.search_cancel.store(true, Ordering::Relaxed);
+                    self.search_rx = None;
+                    self.search_running = false;
+                    self.search_results.clear();
+                    self.search_selected = 0;
+                    self.search_scroll = 0;
+                    self.status_msg = String::from(" Type a query to search… ");
+                } else {
+                    self.run_search();
+                }
+            }
+        }
+
         if self.search_rx.is_none() {
             return;
         }

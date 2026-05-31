@@ -31,7 +31,9 @@ Select any line range in the text diff, press `Enter`, and see a **structured AS
 Open any `.cpp` file and explore its full AST in a split view: source lines on the left, tree nodes on the right. Select a line range and press `Enter` to zoom the AST to that slice.
 
 ### Project browser
-Point mastdiff at a directory or at a build with `compile_commands.json` and it will discover all C++ translation units. Switch between views with `1`–`4`:
+Point mastdiff at a directory or at a build with `compile_commands.json` and it will discover all C++ translation units. The TUI opens immediately — files stream in live with a spinner while the background indexer runs.
+
+Switch between views with `1`–`4`:
 
 - **TUs** — source files with expandable associated headers (static `#include` analysis)
 - **Sources** — flat list of `.cpp`/`.cc`/`.cxx` files
@@ -44,6 +46,7 @@ j / k          navigate files
 Space          expand / collapse TU or CMake target
 s              filter file list by name
 Enter          open file in AST browser
+Esc            back to project browser (from a file view)
 g              open grep search
 f              open AST / tree-sitter search
 Ctrl+o         open selected file in configured external editor
@@ -53,6 +56,8 @@ q              quit
 ### Structural code search
 
 Search the entire project with shorthand queries or raw tree-sitter S-expressions. The query bar **highlights recognised prefixes** in distinct colours so you know the keyword was parsed.
+
+Search is **live** — results stream in as you type, with no need to press Enter. A 300 ms debounce prevents searches firing on every keystroke; Enter triggers immediately. Clearing the query cancels any running search and wipes the results list.
 
 | Query | Finds |
 |---|---|
@@ -70,7 +75,7 @@ Search the entire project with shorthand queries or raw tree-sitter S-expression
 | `AudioBus` | plain-text grep (case-insensitive) across all files |
 | `(call_expression function: (identifier) @fn)` | raw tree-sitter query |
 
-Press **`Alt+R`** to toggle regex mode — the `[.*]` badge in the title bar turns orange when active. In regex mode the filter part of shorthand queries (`fn:upd.*`) and the full grep pattern are treated as regular expressions.
+Press **`Alt+R`** to toggle regex mode — the `[.*]` badge in the title bar turns orange when active. In regex mode the filter part of shorthand queries (`fn:upd.*`) and the full grep pattern are treated as regular expressions. Toggling regex mode immediately retriggers the search.
 
 Results show filename, line number, `@capture_name`, and a source snippet. Navigate with `↑` / `↓`; press `Ctrl+o` to open the file at that exact line in your configured editor.
 
@@ -165,11 +170,11 @@ Both settings are optional; the file itself is optional.
 ### Search
 | Key | Action |
 |---|---|
-| type | edit query in search bar |
+| type | edit query — search fires automatically after 300 ms |
+| `Enter` | run search immediately |
 | `Tab` / `Shift+Tab` | cycle focus: query → include filter → exclude filter |
-| `Enter` | run search |
 | `↑` / `↓` | navigate results (shows live source + AST preview) |
-| `Alt+R` | toggle regex mode |
+| `Alt+R` | toggle regex mode (retriggers search immediately) |
 | `drag` (mouse) | select text in source pane (auto-copies on release) |
 | `Ctrl+C` | copy source selection to clipboard |
 | `Ctrl+Y` | copy highlighted AST node to clipboard |
@@ -231,6 +236,6 @@ tests/
 
 Each query is compiled once with `tree_sitter::Query::new()` and run with `QueryCursor::captures()`. The shorthand prefixes (`fn:`, `call:`, etc.) expand to pre-written S-expression queries with a `@match` capture; the text after the colon is used as a substring filter (or regex when `Alt+R` is active) applied only to the captured node's text, not the whole line.
 
-All files are searched in parallel with Rayon. Results are deduplicated by byte offset (so multiple overlapping patterns in one query never double-count the same node) and sorted by file path then line number.
+All files are searched in parallel with Rayon. Result batches are streamed back to the UI over an `mpsc` channel, so the results list populates live as each file is processed. A cancellation flag lets a new search abort any still-running prior search immediately. When the search finishes, results are deduplicated by byte offset (so multiple overlapping patterns in one query never double-count the same node) and sorted by file path then line number.
 
 The `call:` shorthand additionally runs `call_is_nested()` on each captured node, which walks up the tree through `*_expression` ancestors: if it reaches an `argument_list` before any statement boundary, the call is a nested argument and is silently dropped.
