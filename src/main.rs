@@ -113,6 +113,9 @@ fn main() -> Result<()> {
         // Advance the spinner animation counter (≈20 ticks/s at 50 ms poll).
         app.spinner_tick = app.spinner_tick.wrapping_add(1);
 
+        // Drain pending search result batches from the background search thread.
+        app.tick_search();
+
         // Drain messages from the background project loader.
         if let Some(ref rx) = project_rx {
             let mut finished = false;

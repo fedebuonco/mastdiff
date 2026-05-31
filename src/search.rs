@@ -15,6 +15,8 @@
 
 use std::collections::HashSet;
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 
 use rayon::prelude::*;
 use regex::Regex;
@@ -287,6 +289,39 @@ fn glob_bytes(p: &[u8], t: &[u8]) -> bool {
 
 // ── Project-wide parallel search ─────────────────────────────────────────
 
+/// Streaming search — sends per-file result batches through `tx` as soon as
+/// each file is processed (using Rayon's thread pool).  Closes the channel
+/// when all files are done so the receiver can detect completion via
+/// `TryRecvError::Disconnected`.  Checks `cancel` before processing each
+/// file; set it to `true` to stop early (e.g. when a new search starts).
+pub fn search_project_streaming(
+    files: &[String],
+    query: &SearchQuery,
+    tx: mpsc::SyncSender<Vec<SearchResult>>,
+    cancel: Arc<AtomicBool>,
+) {
+    if query.is_empty() {
+        return;
+    }
+    log::info!(
+        "search (stream): mode={} files={}",
+        if query.grep_mode { "grep" } else { "ts-query" },
+        files.len(),
+    );
+    files.par_iter().for_each_with(tx, |tx, f| {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        let hits = search_file(f, query);
+        if !hits.is_empty() {
+            log::debug!("search: {} hits in {}", hits.len(), f);
+            let _ = tx.send(hits); // silently drop if receiver gone (cancelled)
+        }
+    });
+    // tx is dropped here → channel closes → receiver sees Disconnected
+}
+
+#[allow(dead_code)] // used by integration tests
 pub fn search_project(files: &[String], query: &SearchQuery) -> Vec<SearchResult> {
     if query.is_empty() {
         return vec![];

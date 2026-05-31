@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -12,7 +14,7 @@ use crate::config::Config;
 use crate::export;
 use crate::input::TextInput;
 use crate::project::{CmakeTarget, TranslationUnit};
-use crate::search::{parse_query, search_project, FileFilter, SearchQuery, SearchResult};
+use crate::search::{parse_query, search_project_streaming, FileFilter, SearchQuery, SearchResult};
 use crate::syntax::SyntaxSpan;
 use crate::text_diff::{compute_diff, context_view, hunk_positions, DiffLine};
 
@@ -212,6 +214,14 @@ pub struct App {
     /// Monotonically incrementing counter driven by the main loop (one tick ≈ 50 ms).
     /// Used by the renderer to animate the spinner.
     pub spinner_tick: u64,
+
+    // ---- streaming search
+    /// True while a background search thread is running.
+    pub search_running: bool,
+    /// Receives result batches from the background search thread.
+    pub search_rx: Option<mpsc::Receiver<Vec<SearchResult>>>,
+    /// Set to `true` to ask a running search to stop early.
+    pub search_cancel: Arc<AtomicBool>,
 }
 
 impl App {
@@ -295,6 +305,9 @@ impl App {
             search_sel: None,
             loading: false,
             spinner_tick: 0,
+            search_running: false,
+            search_rx: None,
+            search_cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -378,6 +391,9 @@ impl App {
             search_sel: None,
             loading: false,
             spinner_tick: 0,
+            search_running: false,
+            search_rx: None,
+            search_cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -467,6 +483,9 @@ impl App {
             search_sel: None,
             loading: true,
             spinner_tick: 0,
+            search_running: false,
+            search_rx: None,
+            search_cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -1854,35 +1873,126 @@ impl App {
             })
             .collect();
 
+        let n_files = file_paths.len();
         log::info!(
             "run_search: {}/{} files after include={:?} exclude={:?}",
-            file_paths.len(), self.project_files.len(),
+            n_files, self.project_files.len(),
             self.search_include.as_str(), self.search_exclude.as_str()
         );
 
-        let results = search_project(&file_paths, &self.search_query);
-        let n = results.len();
-        self.search_results = results;
+        // Cancel any in-progress search, issue a new cancel token.
+        self.search_cancel.store(true, Ordering::Relaxed);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.search_cancel = Arc::clone(&cancel);
+
+        // Reset result state.
+        self.search_results.clear();
         self.search_selected = 0;
         self.search_scroll = 0;
+        self.search_source_lines = vec![];
+        self.search_source_scroll = 0;
+        self.search_source_highlight = 0;
+        self.search_ast_nodes = vec![];
+        self.search_ast_scroll = 0;
+        self.search_ast_highlight = 0;
+        self.search_running = true;
 
-        if !self.search_results.is_empty() {
-            log::debug!("search results: loading first result");
-            self.load_search_result(0);
-        } else {
-            log::info!("search: no results for {:?}", raw);
-            self.search_source_lines = vec![];
-            self.search_source_scroll = 0;
-            self.search_source_highlight = 0;
-            self.search_ast_nodes = vec![];
-            self.search_ast_scroll = 0;
-            self.search_ast_highlight = 0;
-        }
+        // Bounded channel — 512 batches of results queued at most.
+        let (tx, rx) = mpsc::sync_channel::<Vec<SearchResult>>(512);
+        self.search_rx = Some(rx);
+
+        let query = self.search_query.clone();
+        std::thread::spawn(move || {
+            search_project_streaming(&file_paths, &query, tx, cancel);
+        });
 
         self.status_msg = format!(
-            " {} results for {:?}  ↑↓:navigate  Ctrl+o:open in {}  Esc:back ",
-            n, raw, self.config.open_in.label()
+            " {} Searching {:?} across {} file{}… ",
+            Self::spinner_frame(0),
+            raw,
+            n_files,
+            if n_files == 1 { "" } else { "s" },
         );
+    }
+
+    /// Drain pending result batches from the background search thread.
+    /// Call once per main-loop tick (≈ every 50 ms).
+    pub fn tick_search(&mut self) {
+        if self.search_rx.is_none() {
+            return;
+        }
+
+        let prev_empty = self.search_results.is_empty();
+        let mut done = false;
+
+        // Drain up to 50 batches per tick so the UI is never stalled.
+        for _ in 0..50 {
+            match self.search_rx.as_ref().unwrap().try_recv() {
+                Ok(batch) => {
+                    self.search_results.extend(batch);
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+            }
+        }
+
+        // After draining, peek once more to catch a disconnect that arrived
+        // right after the last batch (avoids a 50 ms delay in finalising).
+        if !done {
+            if let Err(mpsc::TryRecvError::Disconnected) =
+                self.search_rx.as_ref().unwrap().try_recv()
+            {
+                done = true;
+            }
+        }
+
+        // Load the first result as soon as any arrive.
+        if prev_empty && !self.search_results.is_empty() {
+            self.load_search_result(0);
+        }
+
+        if done {
+            self.search_rx = None;
+            self.search_running = false;
+
+            // Sort: by file path then line number.
+            self.search_results
+                .sort_by(|a, b| a.file_path.cmp(&b.file_path).then(a.line.cmp(&b.line)));
+
+            // Re-load result 0 after sort so the right-pane stays consistent.
+            self.search_selected = 0;
+            self.search_scroll = 0;
+            if !self.search_results.is_empty() {
+                self.load_search_result(0);
+            }
+
+            let n = self.search_results.len();
+            let raw = self.search_query.raw.clone();
+            self.status_msg = format!(
+                " {} result{} for {:?}  ↑↓:navigate  Ctrl+o:open in {}  Esc:back ",
+                n,
+                if n == 1 { "" } else { "s" },
+                raw,
+                self.config.open_in.label()
+            );
+        } else if self.search_running {
+            let n = self.search_results.len();
+            let frame = Self::spinner_frame(self.spinner_tick);
+            self.status_msg = format!(
+                " {} Searching…  {} result{} so far ",
+                frame,
+                n,
+                if n == 1 { "" } else { "s" }
+            );
+        }
+    }
+
+    fn spinner_frame(tick: u64) -> &'static str {
+        const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        FRAMES[(tick / 2) as usize % FRAMES.len()]
     }
 
     fn load_search_result(&mut self, idx: usize) {

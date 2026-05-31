@@ -300,6 +300,8 @@ fn render_text_input(f: &mut Frame, text: &str, cursor_col: usize, focused: bool
 
 // ── Results list ──────────────────────────────────────────────────────────
 
+const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 fn render_results_list(f: &mut Frame, app: &App, area: Rect) {
     let n = app.search_results.len();
     let mode_tag = if app.search_query.grep_mode {
@@ -309,16 +311,29 @@ fn render_results_list(f: &mut Frame, app: &App, area: Rect) {
     } else {
         ""
     };
-    let title = if n == 0 {
-        format!(" Results [{}] ", mode_tag)
+
+    let (title, title_color) = if app.search_running {
+        let frame = SPINNER[(app.spinner_tick / 2) as usize % SPINNER.len()];
+        let t = if n == 0 {
+            format!(" ⚙ {} Searching… [{}] ", frame, mode_tag)
+        } else {
+            format!(" ⚙ {} {} [{}] ", frame, n, mode_tag)
+        };
+        (t, Color::Rgb(220, 170, 60))
+    } else if n == 0 {
+        (format!(" Results [{}] ", mode_tag), Color::Rgb(170, 170, 220))
     } else {
-        format!(" {}/{} [{}] ", app.search_selected + 1, n, mode_tag)
+        (format!(" {}/{} [{}] ", app.search_selected + 1, n, mode_tag), Color::Rgb(170, 170, 220))
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(80, 80, 110)))
-        .title(Span::styled(title, Style::default().fg(Color::Rgb(170, 170, 220)).add_modifier(Modifier::BOLD)));
+        .border_style(Style::default().fg(if app.search_running {
+            Color::Rgb(160, 120, 40)
+        } else {
+            Color::Rgb(80, 80, 110)
+        }))
+        .title(Span::styled(title, Style::default().fg(title_color).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -340,8 +355,13 @@ fn render_results_list(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::with_capacity(view_height);
 
     if app.search_results.is_empty() {
+        let msg = if app.search_running {
+            " Searching…"
+        } else {
+            " No results — press Enter to search."
+        };
         lines.push(Line::styled(
-            " No results yet — press Enter to search.",
+            msg,
             Style::default().fg(Color::Rgb(80, 80, 100)),
         ));
     } else {
