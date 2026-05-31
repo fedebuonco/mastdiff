@@ -6,7 +6,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::{fs, io, panic, path::Path, time::Duration};
+use std::{fs, io, panic, path::Path, sync::mpsc, time::Duration};
 
 mod app;
 mod ast_diff;
@@ -47,16 +47,22 @@ fn main() -> Result<()> {
     let left_path = Path::new(&cli.left);
     log::debug!("cli args: left={:?} right={:?}", cli.left, cli.right);
 
+    // For project mode we spawn a background loader and stream results to the
+    // UI.  For the other modes we still build the App synchronously.
+    let mut project_rx: Option<mpsc::Receiver<project::LoadMsg>> = None;
+
     let app = if left_path.is_dir() {
-        // Project browser mode
-        let data = project::load(left_path)?;
-        if data.files.is_empty() {
-            eprintln!("No C++ source files found in {:?}", left_path);
-            std::process::exit(1);
-        }
-        log::info!("project mode: {} files, {} cmake targets in {:?}",
-            data.files.len(), data.cmake_targets.len(), left_path);
-        App::new_project(data, cli.left.clone(), cfg.clone())
+        // Project browser mode — start TUI immediately, load in background
+        log::info!("project mode (streaming): {:?}", left_path);
+        let (tx, rx) = mpsc::channel::<project::LoadMsg>();
+        let dir = left_path.to_path_buf();
+        std::thread::spawn(move || {
+            if let Err(e) = project::load_streaming(&dir, &tx) {
+                log::error!("project loader error: {}", e);
+            }
+        });
+        project_rx = Some(rx);
+        App::new_project_loading(cli.left.clone(), cfg.clone())
     } else if let Some(ref right_path) = cli.right {
         // Two-file diff mode
         let left = fs::read_to_string(&cli.left)?;
@@ -96,7 +102,30 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
     let mut app = app;
 
+    // Drain any terminal events that leaked from the shell (e.g. the Enter
+    // keypress used to launch mastdiff — which would otherwise immediately
+    // open the first file in the project browser).
+    while event::poll(Duration::from_millis(0))? {
+        let _ = event::read()?;
+    }
+
     loop {
+        // Advance the spinner animation counter (≈20 ticks/s at 50 ms poll).
+        app.spinner_tick = app.spinner_tick.wrapping_add(1);
+
+        // Drain messages from the background project loader.
+        if let Some(ref rx) = project_rx {
+            let mut finished = false;
+            while let Ok(msg) = rx.try_recv() {
+                if matches!(msg, project::LoadMsg::Finished(_)) {
+                    finished = true;
+                }
+                app.handle_load_msg(msg);
+                if finished { break; }
+            }
+            if finished { project_rx = None; }
+        }
+
         let height = terminal.size()?.height as usize;
         terminal.draw(|f| ui::render(f, &mut app, height))?;
 

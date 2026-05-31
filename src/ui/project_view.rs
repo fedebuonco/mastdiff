@@ -20,31 +20,51 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 
 // ── Header bar ────────────────────────────────────────────────────────────
 
+/// Braille spinner frames — one full rotation every ~500 ms at 50 ms ticks.
+const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
     let n_shown = app.project_display.len();
     let n_total = app.project_files.len();
 
-    let view_tabs = Line::from(vec![
-        tab_span("1:TUs",    app.project_view == ProjectView::Tus),
-        Span::raw(" "),
-        tab_span("2:Sources", app.project_view == ProjectView::Sources),
-        Span::raw(" "),
-        tab_span("3:Headers", app.project_view == ProjectView::Headers),
-        Span::raw(" "),
-        tab_span("4:CMake",  app.project_view == ProjectView::Cmake),
-        Span::styled(
-            format!("   {}/{} items", n_shown, n_total),
-            Style::default().fg(Color::Rgb(80, 80, 100)),
-        ),
-        if !app.cmake_targets.is_empty() {
+    // While loading: show a spinning cog + live file count instead of tabs.
+    let header_content: Line = if app.loading {
+        let frame = SPINNER[(app.spinner_tick / 2) as usize % SPINNER.len()];
+        let sources = app.project_files.iter().filter(|tu| !tu.is_header).count();
+        let headers = app.project_files.iter().filter(|tu| tu.is_header).count();
+        Line::from(vec![
             Span::styled(
-                format!("   {} cmake targets", app.cmake_targets.len()),
-                Style::default().fg(Color::Rgb(100, 160, 80)),
-            )
-        } else {
-            Span::raw("")
-        },
-    ]);
+                format!("  ⚙ {} Indexing  ", frame),
+                Style::default().fg(Color::Rgb(220, 170, 60)).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{} sources  {} headers", sources, headers),
+                Style::default().fg(Color::Rgb(140, 160, 200)),
+            ),
+        ])
+    } else {
+        Line::from(vec![
+            tab_span("1:TUs",    app.project_view == ProjectView::Tus),
+            Span::raw(" "),
+            tab_span("2:Sources", app.project_view == ProjectView::Sources),
+            Span::raw(" "),
+            tab_span("3:Headers", app.project_view == ProjectView::Headers),
+            Span::raw(" "),
+            tab_span("4:CMake",  app.project_view == ProjectView::Cmake),
+            Span::styled(
+                format!("   {}/{} items", n_shown, n_total),
+                Style::default().fg(Color::Rgb(80, 80, 100)),
+            ),
+            if !app.cmake_targets.is_empty() {
+                Span::styled(
+                    format!("   {} cmake targets", app.cmake_targets.len()),
+                    Style::default().fg(Color::Rgb(100, 160, 80)),
+                )
+            } else {
+                Span::raw("")
+            },
+        ])
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -59,6 +79,11 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
         ));
     let inner = block.inner(area);
     f.render_widget(block, area);
+
+    if app.loading {
+        f.render_widget(Paragraph::new(header_content), inner);
+        return;
+    }
 
     if app.project_filter_active {
         // Show text input for filter
@@ -83,10 +108,10 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Rgb(140, 140, 160)),
         );
         let mut spans = vec![filter_span];
-        spans.extend(view_tabs.spans);
+        spans.extend(header_content.spans);
         f.render_widget(Paragraph::new(Line::from(spans)), inner);
     } else {
-        f.render_widget(Paragraph::new(view_tabs), inner);
+        f.render_widget(Paragraph::new(header_content), inner);
     }
 }
 

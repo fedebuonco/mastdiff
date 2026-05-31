@@ -205,6 +205,13 @@ pub struct App {
     /// Normalized selection range: (start, end) both in (line, char_col) file coords.
     /// start <= end always.
     pub search_sel: Option<((usize, usize), (usize, usize))>,
+
+    // ---- streaming project load
+    /// True while the background loader thread is still running.
+    pub loading: bool,
+    /// Monotonically incrementing counter driven by the main loop (one tick ≈ 50 ms).
+    /// Used by the renderer to animate the spinner.
+    pub spinner_tick: u64,
 }
 
 impl App {
@@ -286,6 +293,8 @@ impl App {
             search_ast_area:     Rect::default(),
             search_sel_anchor: None,
             search_sel: None,
+            loading: false,
+            spinner_tick: 0,
         }
     }
 
@@ -367,21 +376,25 @@ impl App {
             search_ast_area:     Rect::default(),
             search_sel_anchor: None,
             search_sel: None,
+            loading: false,
+            spinner_tick: 0,
         }
     }
 
+    /// Synchronous constructor — kept for integration tests and any callers that
+    /// have the full `ProjectData` up-front. In the binary, project mode now
+    /// uses [`new_project_loading`] with a streaming background loader instead.
+    #[allow(dead_code)]
     pub fn new_project(data: crate::project::ProjectData, dir_path: String, config: Config) -> Self {
-        let files = data.files;
-        let cmake_targets = data.cmake_targets;
+        let mut app = Self::new_project_loading(dir_path, config);
+        app.finish_project_load(data);
+        app
+    }
 
-        // Build initial display list (TU view, no filter, all collapsed).
-        let project_display: Vec<ProjectRow> = files
-            .iter()
-            .enumerate()
-            .filter(|(_, tu)| !tu.is_header)
-            .map(|(i, _)| ProjectRow::Source(i))
-            .collect();
-
+    /// Start the project browser immediately with an empty file list.
+    /// The caller is expected to populate it via [`handle_load_msg`] /
+    /// [`finish_project_load`] once the background loader delivers data.
+    pub fn new_project_loading(dir_path: String, config: Config) -> Self {
         Self {
             left_path: dir_path.clone(),
             right_path: dir_path,
@@ -416,10 +429,10 @@ impl App {
             single_cursor: 0,
             single_filter: AstFilter::All,
             single_filter_rows: vec![],
-            project_files: files,
-            cmake_targets,
+            project_files: vec![],
+            cmake_targets: vec![],
             project_view: ProjectView::Tus,
-            project_display,
+            project_display: vec![],
             project_expanded: HashSet::new(),
             project_cursor: 0,
             project_filter: TextInput::new(),
@@ -444,9 +457,7 @@ impl App {
             search_prev_mode: AppMode::ProjectBrowser,
             help_prev_mode: AppMode::ProjectBrowser,
             should_quit: false,
-            status_msg: String::from(
-                " j/k:navigate  Enter:open  s:filter  g:grep  f:ast search  q:quit",
-            ),
+            status_msg: String::from(" ⚙ Indexing… "),
             config,
             pending_open: None,
             search_results_area: Rect::default(),
@@ -454,7 +465,64 @@ impl App {
             search_ast_area:     Rect::default(),
             search_sel_anchor: None,
             search_sel: None,
+            loading: true,
+            spinner_tick: 0,
         }
+    }
+
+    /// Called when the background loader delivers a batch or the final result.
+    pub fn handle_load_msg(&mut self, msg: crate::project::LoadMsg) {
+        use crate::project::LoadMsg;
+        match msg {
+            LoadMsg::FilesBatch(tus) => {
+                self.project_files.extend(tus);
+                self.rebuild_project_display();
+            }
+            LoadMsg::Finished(data) => {
+                self.finish_project_load(data);
+            }
+        }
+    }
+
+    /// Replace the (possibly partial) file list with the fully-analysed data
+    /// and mark loading as complete.
+    pub fn finish_project_load(&mut self, data: crate::project::ProjectData) {
+        self.project_files = data.files;
+        self.cmake_targets = data.cmake_targets;
+        self.loading = false;
+        self.rebuild_project_display();
+        self.status_msg = String::from(
+            " j/k:navigate  Enter:open  s:filter  g:grep  f:ast  q:quit",
+        );
+    }
+
+    /// Open a file from the project browser without destroying the project
+    /// state — preserves `project_files`, `project_cursor`, etc. so that
+    /// `Esc` can navigate back.
+    fn open_project_file(&mut self, path: String, content: String) {
+        let ast = parse_single(&content).unwrap_or_default();
+        let vis: Vec<usize> = (0..ast.len()).collect();
+
+        self.left_path = path;
+        self.left_lines = content.lines().map(|l| l.to_string()).collect();
+        self.right_lines = vec![];
+        self.single_file = true;
+        self.diff_lines = vec![];
+        self.scroll = 0;
+        self.cursor = 0;
+        self.selection_start = None;
+        self.selection_end = None;
+        self.single_ast = ast;
+        self.single_collapsed = HashSet::new();
+        self.single_visible = vis.clone();
+        self.single_filter_rows = vis;
+        self.single_scroll = 0;
+        self.single_cursor = 0;
+        self.single_filter = AstFilter::All;
+        self.mode = AppMode::SingleFile;
+        self.status_msg = String::from(
+            " Esc:back  j/k:scroll  s/e:select  Enter:AST  Space:fold  f:filter  Ctrl+o:editor ",
+        );
     }
 
     // ── Scroll clamping (called by renderer) ──────────────────────────────
@@ -941,14 +1009,28 @@ impl App {
                 );
             }
             KeyCode::Esc => {
-                self.selection_start = None;
-                self.selection_end = None;
-                self.single_filter_rows = self.single_visible.clone();
-                self.single_scroll = 0;
-                self.single_cursor = 0;
-                self.status_msg = String::from(
-                    " q:quit  j/k:scroll  s/e:select  Enter:AST of selection  Space:fold  f:filter ",
-                );
+                let has_selection = self.selection_start.is_some();
+                let has_ast_zoom  = self.single_filter_rows.len() != self.single_visible.len();
+                if has_selection || has_ast_zoom {
+                    // First Esc: clear any active selection / AST zoom
+                    self.selection_start = None;
+                    self.selection_end = None;
+                    self.single_filter_rows = self.single_visible.clone();
+                    self.single_scroll = 0;
+                    self.single_cursor = 0;
+                    let back = if !self.project_files.is_empty() { "Esc:back  " } else { "q:quit  " };
+                    self.status_msg = format!(
+                        " {}j/k:scroll  s/e:select  Enter:AST  Space:fold  f:filter ",
+                        back
+                    );
+                } else if !self.project_files.is_empty() {
+                    // Second Esc (nothing to clear): return to project browser
+                    log::info!("mode: SingleFile → ProjectBrowser");
+                    self.mode = AppMode::ProjectBrowser;
+                    self.status_msg = String::from(
+                        " j/k:navigate  Enter:open  s:filter  g:grep  f:ast  q:quit",
+                    );
+                }
             }
 
             // ── AST collapse (right pane)
@@ -1458,8 +1540,7 @@ impl App {
                 if let Some(path) = self.selected_project_path() {
                     if let Ok(content) = fs::read_to_string(&path) {
                         log::info!("opening file: {}", path);
-                        let cfg = self.config.clone();
-                        *self = App::new_single(content, path, cfg);
+                        self.open_project_file(path, content);
                     } else {
                         log::warn!("cannot read file: {}", path);
                         self.status_msg = String::from(" Cannot read file. ");

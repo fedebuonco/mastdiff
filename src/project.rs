@@ -77,8 +77,19 @@ pub struct ProjectData {
     pub cmake_targets: Vec<CmakeTarget>,
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────
+/// Messages sent by [`load_streaming`] to the UI thread.
+pub enum LoadMsg {
+    /// A small batch of files discovered during the walk phase.
+    FilesBatch(Vec<TranslationUnit>),
+    /// Walk + include analysis complete; final data replaces the streamed files.
+    Finished(ProjectData),
+}
 
+// ── Entry points ──────────────────────────────────────────────────────────
+
+/// Blocking load — discovers files, runs include analysis, returns.
+/// Used when the full result is needed before proceeding (e.g. integration tests).
+#[allow(dead_code)]
 pub fn load(dir: &Path) -> Result<ProjectData> {
     let mut files = if let Some(cc) = find_compile_commands(dir) {
         log::info!("project loader: compile_commands.json at {:?}", cc);
@@ -92,15 +103,88 @@ pub fn load(dir: &Path) -> Result<ProjectData> {
         tus
     };
 
-    // ── Static include analysis ───────────────────────────────────────────
-    // Build lookup structures for resolving raw include strings to file paths.
+    analyze_includes(&mut files);
+
+    let cmake_targets = find_cmake_targets(dir);
+    log::info!("project loader: {} cmake targets", cmake_targets.len());
+    Ok(ProjectData { files, cmake_targets })
+}
+
+/// Streaming load — sends [`LoadMsg::FilesBatch`] messages as files are
+/// discovered so the UI can populate immediately, then sends
+/// [`LoadMsg::Finished`] with the fully-analysed [`ProjectData`].
+///
+/// Designed to run on a background thread; returns early if the receiver
+/// has been dropped.
+pub fn load_streaming(dir: &Path, tx: &std::sync::mpsc::Sender<LoadMsg>) -> Result<()> {
+    const BATCH: usize = 25;
+
+    // ── Phase 1: enumerate files and stream batches to the UI ────────────
+    let mut files = if let Some(cc) = find_compile_commands(dir) {
+        log::info!("project loader (stream): compile_commands at {:?}", cc);
+        let tus = load_from_compile_commands(&cc, dir)?;
+        for chunk in tus.chunks(BATCH) {
+            if tx.send(LoadMsg::FilesBatch(chunk.to_vec())).is_err() {
+                return Ok(());   // UI gone — stop silently
+            }
+        }
+        tus
+    } else {
+        log::info!("project loader (stream): directory walk of {:?}", dir);
+        let mut all: Vec<TranslationUnit> = Vec::new();
+        let mut batch: Vec<TranslationUnit> = Vec::new();
+
+        for entry in WalkDir::new(dir)
+            .follow_links(true)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .filter(|e| is_cpp_source(&e.path().to_string_lossy()))
+        {
+            let path = entry.path().to_string_lossy().into_owned();
+            let file_size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            let hdr = is_header(&path);
+            let tu = TranslationUnit {
+                file_path: path,
+                file_size,
+                is_header: hdr,
+                associated_headers: vec![],
+                included_by: vec![],
+            };
+            batch.push(tu.clone());
+            all.push(tu);
+            if batch.len() >= BATCH && tx.send(LoadMsg::FilesBatch(std::mem::take(&mut batch))).is_err() {
+                return Ok(());
+            }
+        }
+        if !batch.is_empty() {
+            let _ = tx.send(LoadMsg::FilesBatch(batch));
+        }
+        all.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+        all
+    };
+
+    // ── Phase 2: include analysis (slower — tree-sitter per source file) ─
+    analyze_includes(&mut files);
+
+    let cmake_targets = find_cmake_targets(dir);
+    log::info!("project loader (stream): done — {} files, {} cmake targets",
+        files.len(), cmake_targets.len());
+    let _ = tx.send(LoadMsg::Finished(ProjectData { files, cmake_targets }));
+    Ok(())
+}
+
+// ── Include analysis ─────────────────────────────────────────────────────
+
+/// Parse `#include "…"` directives in every source file, resolve them to
+/// paths in the project, and fill `associated_headers` / `included_by`.
+fn analyze_includes(files: &mut [TranslationUnit]) {
     let header_paths: HashSet<String> = files
         .iter()
         .filter(|tu| tu.is_header)
         .map(|tu| tu.file_path.clone())
         .collect();
 
-    // filename → [full_path] for headers (e.g. "audio.h" → ["/…/include/audio.h"])
     let mut header_by_name: HashMap<String, Vec<String>> = HashMap::new();
     for p in &header_paths {
         let name = Path::new(p)
@@ -111,11 +195,8 @@ pub fn load(dir: &Path) -> Result<ProjectData> {
         header_by_name.entry(name).or_default().push(p.clone());
     }
 
-    // path_suffix → full_path for partial-path matching
-    // e.g. "spdlog/spdlog.h" can match from inside include/
     let mut header_by_suffix: HashMap<String, String> = HashMap::new();
     for p in &header_paths {
-        // Index every trailing sub-path of depth 1..4
         let components: Vec<&str> = p.split('/').collect();
         for depth in 1..=components.len().min(4) {
             let suffix = components[components.len() - depth..].join("/");
@@ -123,7 +204,6 @@ pub fn load(dir: &Path) -> Result<ProjectData> {
         }
     }
 
-    // Collect all unique source directory paths as additional include-path hints.
     let include_dirs: Vec<String> = files
         .iter()
         .filter_map(|tu| Path::new(&tu.file_path).parent()?.to_str().map(str::to_owned))
@@ -131,12 +211,7 @@ pub fn load(dir: &Path) -> Result<ProjectData> {
         .into_iter()
         .collect();
 
-    // Parse #include directives from every source file using tree-sitter,
-    // resolve to actual paths in the project, and record associations both
-    // ways: source → headers (associated_headers) and header → sources (included_by).
-    let mut included_by: HashMap<String, Vec<String>> = HashMap::new(); // header → sources
-
-    // We need to iterate by index to later mutate `files`.
+    let mut included_by: HashMap<String, Vec<String>> = HashMap::new();
     let source_indices: Vec<usize> = files
         .iter()
         .enumerate()
@@ -166,15 +241,14 @@ pub fn load(dir: &Path) -> Result<ProjectData> {
         );
     }
 
-    // Populate included_by on header entries.
-    for tu in &mut files {
+    for tu in files.iter_mut() {
         if !tu.is_header { continue; }
         if let Some(sources) = included_by.get(&tu.file_path) {
             tu.included_by = sources.clone();
         }
     }
 
-    for tu in &files {
+    for tu in files.iter() {
         log::trace!(
             "  {}{} ({}) hdrs={} iby={}",
             if tu.is_header { "[H] " } else { "    " },
@@ -183,11 +257,6 @@ pub fn load(dir: &Path) -> Result<ProjectData> {
             tu.included_by.len()
         );
     }
-
-    let cmake_targets = find_cmake_targets(dir);
-    log::info!("project loader: {} cmake targets", cmake_targets.len());
-
-    Ok(ProjectData { files, cmake_targets })
 }
 
 // ── File discovery ────────────────────────────────────────────────────────
@@ -240,6 +309,7 @@ fn load_from_compile_commands(path: &Path, project_root: &Path) -> Result<Vec<Tr
     Ok(tus)
 }
 
+#[allow(dead_code)]
 fn load_from_walk(dir: &Path) -> Result<Vec<TranslationUnit>> {
     let mut tus: Vec<TranslationUnit> = WalkDir::new(dir)
         .follow_links(true)
