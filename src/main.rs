@@ -138,6 +138,9 @@ fn main() -> Result<()> {
                     app.handle_mouse(mouse);
                 }
                 Event::Key(key) => {
+                if key.kind != crossterm::event::KeyEventKind::Press {
+                    continue;
+                }
                 if key.code == KeyCode::Char('q') && key.modifiers == KeyModifiers::NONE {
                     break;
                 }
