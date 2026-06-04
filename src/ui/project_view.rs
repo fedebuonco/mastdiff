@@ -185,38 +185,15 @@ fn render_row(app: &App, row: &ProjectRow, is_cursor: bool, width: usize) -> Lin
     match row {
         ProjectRow::Source(idx) => {
             let tu = &app.project_files[*idx];
-            let expanded = app.project_expanded.contains(idx);
-            let has_headers = !tu.associated_headers.is_empty();
-
-            let expand_icon = match (has_headers, expanded) {
-                (true, true)  => "▾ ",
-                (true, false) => "▸ ",
-                _             => "  ",
-            };
-            let arrow = if is_cursor { "▶" } else { " " };
-            let prefix = format!("{}{}", arrow, expand_icon);
-            file_line(&prefix, tu.short_name(), &tu.size_label(), is_cursor, width,
+            let arrow = if is_cursor { "▶ " } else { "  " };
+            file_line(arrow, tu.short_name(), &tu.size_label(), is_cursor, width,
                       Color::Rgb(150, 200, 255))
-        }
-
-        ProjectRow::Header { path, size, .. } => {
-            let name = short_name(path);
-            let size_label = size_label(*size);
-            let prefix = if is_cursor { "▶  ├ " } else { "   ├ " };
-            file_line(prefix, name, &size_label, is_cursor, width,
-                      Color::Rgb(100, 180, 130))
         }
 
         ProjectRow::LooseHeader(idx) => {
             let tu = &app.project_files[*idx];
             let arrow = if is_cursor { "▶ " } else { "  " };
-            let right = if tu.included_by.is_empty() {
-                tu.size_label()
-            } else {
-                format!("← {} TU{}", tu.included_by.len(),
-                    if tu.included_by.len() == 1 { "" } else { "s" })
-            };
-            file_line(arrow, tu.short_name(), &right, is_cursor, width,
+            file_line(arrow, tu.short_name(), &tu.size_label(), is_cursor, width,
                       Color::Rgb(100, 200, 140))
         }
 
@@ -286,8 +263,3 @@ fn short_name(path: &str) -> &str {
         .unwrap_or(path)
 }
 
-fn size_label(size: u64) -> String {
-    if size < 1024 { format!("{}B", size) }
-    else if size < 1024 * 1024 { format!("{:.1}KB", size as f64 / 1024.0) }
-    else { format!("{:.1}MB", size as f64 / (1024.0 * 1024.0)) }
-}

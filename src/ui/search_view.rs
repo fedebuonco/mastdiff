@@ -676,7 +676,7 @@ fn render_ast_pane(f: &mut Frame, app: &mut App, area: Rect) {
                 format!(" AST [{}]{} ", viz_label, nav_hint),
                 Style::default().fg(Color::Cyan),
             ),
-            Span::styled(" v:cycle-viz ", Style::default().fg(Color::Rgb(80, 80, 110))),
+            Span::styled(" Alt+v:cycle-viz ", Style::default().fg(Color::Rgb(80, 80, 110))),
         ]));
     let inner = block.inner(area);
     f.render_widget(block, area);

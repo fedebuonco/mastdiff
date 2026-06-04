@@ -36,7 +36,7 @@ pub enum AppMode {
 /// Which view the project browser is showing.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProjectView {
-    /// Source files with expandable associated headers (default).
+    /// Flat list of source files (default).
     Tus,
     /// Flat list of source files only (.cpp/.cc/.cxx/.C).
     Sources,
@@ -51,9 +51,7 @@ pub enum ProjectView {
 pub enum ProjectRow {
     /// A source file (index into `project_files`).
     Source(usize),
-    /// A header file associated with a source (TU view, expanded).
-    Header { #[allow(dead_code)] parent_idx: usize, path: String, size: u64 },
-    /// A loose header file not associated with any source (Headers view).
+    /// A loose header file (Headers view).
     LooseHeader(usize),
     /// A CMake target (index into `cmake_targets`).
     CmakeTarget(usize),
@@ -351,8 +349,6 @@ impl App {
             file_path: path.clone(),
             file_size,
             is_header,
-            associated_headers: vec![],
-            included_by: vec![],
         };
         // Use the file's parent directory as the "project root" (for relative paths in search).
         let project_root = StdPath::new(&path)
@@ -1499,7 +1495,7 @@ impl App {
                     self.project_filter.clear();
                     self.rebuild_project_display();
                     self.status_msg = String::from(
-                        " j/k:navigate  Space:expand  Enter:open  1-4:views  s:filter  g:grep  f:ast  q:quit",
+                        " j/k:navigate  Enter:open  1-4:views  s:filter  g:grep  f:ast  q:quit",
                     );
                 }
                 KeyCode::Enter => {
@@ -1646,7 +1642,7 @@ impl App {
         self.project_cursor = 0;
         self.rebuild_project_display();
         let hint = match self.project_view {
-            ProjectView::Tus     => " 1:TUs  2:Sources  3:Headers  4:CMake  Space:expand  s:filter  g:grep  f:ast",
+            ProjectView::Tus     => " 1:TUs  2:Sources  3:Headers  4:CMake  s:filter  g:grep  f:ast",
             ProjectView::Sources => " 1:TUs  2:Sources  3:Headers  4:CMake  s:filter  g:grep  f:ast",
             ProjectView::Headers => " 1:TUs  2:Sources  3:Headers  4:CMake  s:filter  g:grep  f:ast",
             ProjectView::Cmake   => " 1:TUs  2:Sources  3:Headers  4:CMake  Space:expand  s:filter",
@@ -1655,17 +1651,9 @@ impl App {
     }
 
     fn project_toggle_expand(&mut self) {
+        // Only CMake targets are expandable; the TU view no longer shows headers inline.
         let Some(row) = self.project_display.get(self.project_cursor).cloned() else { return };
         match row {
-            ProjectRow::Source(idx) => {
-                if self.project_files[idx].associated_headers.is_empty() { return; }
-                if self.project_expanded.contains(&idx) {
-                    self.project_expanded.remove(&idx);
-                } else {
-                    self.project_expanded.insert(idx);
-                }
-                self.rebuild_project_display();
-            }
             ProjectRow::CmakeTarget(idx) => {
                 if self.cmake_targets[idx].sources.is_empty() { return; }
                 if self.project_expanded.contains(&idx) {
@@ -1681,9 +1669,8 @@ impl App {
 
     fn selected_project_path(&self) -> Option<String> {
         match self.project_display.get(self.project_cursor)? {
-            ProjectRow::Source(idx)          => Some(self.project_files[*idx].file_path.clone()),
-            ProjectRow::LooseHeader(idx)     => Some(self.project_files[*idx].file_path.clone()),
-            ProjectRow::Header { path, .. }  => Some(path.clone()),
+            ProjectRow::Source(idx)              => Some(self.project_files[*idx].file_path.clone()),
+            ProjectRow::LooseHeader(idx)         => Some(self.project_files[*idx].file_path.clone()),
             ProjectRow::CmakeSource { path, .. } => Some(path.clone()),
             ProjectRow::CmakeTarget(_)       => None, // targets aren't files
         }
@@ -1702,16 +1689,6 @@ impl App {
                         continue;
                     }
                     rows.push(ProjectRow::Source(idx));
-                    if self.project_expanded.contains(&idx) {
-                        for hpath in &tu.associated_headers {
-                            let size = fs::metadata(hpath).map(|m| m.len()).unwrap_or(0);
-                            rows.push(ProjectRow::Header {
-                                parent_idx: idx,
-                                path: hpath.clone(),
-                                size,
-                            });
-                        }
-                    }
                 }
             }
             ProjectView::Sources => {
@@ -1915,8 +1892,8 @@ impl App {
                 return;
             }
 
-            // ── Cycle AST visualization mode (v)
-            KeyCode::Char('v') => {
+            // ── Cycle AST visualization mode (Alt+v)
+            KeyCode::Char('v') if key.modifiers == KeyModifiers::ALT => {
                 self.search_ast_viz = self.search_ast_viz.next();
                 self.search_ast_scroll = 0;
                 self.search_timeline_base = None; // reset zoom when switching views
@@ -2056,7 +2033,7 @@ impl App {
         self.search_running = true;
 
         // Bounded channel — 512 batches of results queued at most.
-        let (tx, rx) = mpsc::sync_channel::<Vec<SearchResult>>(512);
+        let (tx, rx) = mpsc::sync_channel::<Vec<SearchResult>>(4096);
         self.search_rx = Some(rx);
 
         let query = self.search_query.clone();

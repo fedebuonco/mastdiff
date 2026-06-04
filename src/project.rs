@@ -15,12 +15,10 @@
 //! CMake targets are parsed from any `CMakeLists.txt` files in the tree and
 //! returned alongside the file list in [`ProjectData`].
 
-use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use tree_sitter::{Language, Parser, Query, QueryCursor};
 use serde::Deserialize;
 use walkdir::WalkDir;
 
@@ -32,12 +30,6 @@ pub struct TranslationUnit {
     pub file_size: u64,
     /// True for header files (.h/.hpp/.hxx/.H).
     pub is_header: bool,
-    /// Headers directly `#include`d by this source file (sources only).
-    /// Populated by static analysis of `#include "..."` directives.
-    pub associated_headers: Vec<String>,
-    /// Source files that directly `#include` this header (headers only).
-    /// Empty for source files.
-    pub included_by: Vec<String>,
 }
 
 impl TranslationUnit {
@@ -92,7 +84,7 @@ pub enum LoadMsg {
 #[allow(dead_code)]
 pub fn load(dir: &Path) -> Result<ProjectData> {
     let _s = crate::tracer::span("project::load");
-    let mut files = if let Some(cc) = find_compile_commands(dir) {
+    let files = if let Some(cc) = find_compile_commands(dir) {
         log::info!("project loader: compile_commands.json at {:?}", cc);
         let tus = load_from_compile_commands(&cc, dir)?;
         log::info!("project loader: {} translation units loaded", tus.len());
@@ -103,8 +95,6 @@ pub fn load(dir: &Path) -> Result<ProjectData> {
         log::info!("project loader: {} files found", tus.len());
         tus
     };
-
-    analyze_includes(&mut files);
 
     let cmake_targets = find_cmake_targets(dir);
     log::info!("project loader: {} cmake targets", cmake_targets.len());
@@ -122,7 +112,7 @@ pub fn load_streaming(dir: &Path, tx: &std::sync::mpsc::Sender<LoadMsg>) -> Resu
     const BATCH: usize = 25;
 
     // ── Phase 1: enumerate files and stream batches to the UI ────────────
-    let mut files = if let Some(cc) = find_compile_commands(dir) {
+    let files = if let Some(cc) = find_compile_commands(dir) {
         log::info!("project loader (stream): compile_commands at {:?}", cc);
         let tus = load_from_compile_commands(&cc, dir)?;
         for chunk in tus.chunks(BATCH) {
@@ -150,8 +140,6 @@ pub fn load_streaming(dir: &Path, tx: &std::sync::mpsc::Sender<LoadMsg>) -> Resu
                 file_path: path,
                 file_size,
                 is_header: hdr,
-                associated_headers: vec![],
-                included_by: vec![],
             };
             batch.push(tu.clone());
             all.push(tu);
@@ -166,105 +154,11 @@ pub fn load_streaming(dir: &Path, tx: &std::sync::mpsc::Sender<LoadMsg>) -> Resu
         all
     };
 
-    // ── Phase 2: include analysis (slower — tree-sitter per source file) ─
-    analyze_includes(&mut files);
-
     let cmake_targets = find_cmake_targets(dir);
     log::info!("project loader (stream): done — {} files, {} cmake targets",
         files.len(), cmake_targets.len());
     let _ = tx.send(LoadMsg::Finished(ProjectData { files, cmake_targets }));
     Ok(())
-}
-
-// ── Include analysis ─────────────────────────────────────────────────────
-
-/// Parse `#include "…"` directives in every source file, resolve them to
-/// paths in the project, and fill `associated_headers` / `included_by`.
-fn analyze_includes(files: &mut [TranslationUnit]) {
-    let _s = crate::tracer::span("project::analyze_includes");
-    let lang = tree_sitter_cpp::language();
-    let inc_query = match Query::new(&lang, r#"(preproc_include path: (string_literal) @path)"#) {
-        Ok(q) => q,
-        Err(e) => { log::error!("include query compile failed: {}", e); return; }
-    };
-    let header_paths: HashSet<String> = files
-        .iter()
-        .filter(|tu| tu.is_header)
-        .map(|tu| tu.file_path.clone())
-        .collect();
-
-    let mut header_by_name: HashMap<String, Vec<String>> = HashMap::new();
-    for p in &header_paths {
-        let name = Path::new(p)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        header_by_name.entry(name).or_default().push(p.clone());
-    }
-
-    let mut header_by_suffix: HashMap<String, String> = HashMap::new();
-    for p in &header_paths {
-        let components: Vec<&str> = p.split('/').collect();
-        for depth in 1..=components.len().min(4) {
-            let suffix = components[components.len() - depth..].join("/");
-            header_by_suffix.entry(suffix).or_insert_with(|| p.clone());
-        }
-    }
-
-    let include_dirs: Vec<String> = files
-        .iter()
-        .filter_map(|tu| Path::new(&tu.file_path).parent()?.to_str().map(str::to_owned))
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-
-    let mut included_by: HashMap<String, Vec<String>> = HashMap::new();
-    let source_indices: Vec<usize> = files
-        .iter()
-        .enumerate()
-        .filter(|(_, tu)| !tu.is_header)
-        .map(|(i, _)| i)
-        .collect();
-
-    for &si in &source_indices {
-        let src_path = files[si].file_path.clone();
-        let raw_includes = extract_local_includes(&src_path, &lang, &inc_query);
-        let inc_dirs: Vec<&str> = include_dirs.iter().map(|s| s.as_str()).collect();
-        let resolved = resolve_includes(
-            &src_path,
-            &raw_includes,
-            &header_by_name,
-            &header_by_suffix,
-            &inc_dirs,
-        );
-        for h in &resolved {
-            included_by.entry(h.clone()).or_default().push(src_path.clone());
-        }
-        files[si].associated_headers = resolved;
-        log::debug!(
-            "includes: {} → {} headers",
-            Path::new(&src_path).file_name().and_then(|n| n.to_str()).unwrap_or("?"),
-            files[si].associated_headers.len()
-        );
-    }
-
-    for tu in files.iter_mut() {
-        if !tu.is_header { continue; }
-        if let Some(sources) = included_by.get(&tu.file_path) {
-            tu.included_by = sources.clone();
-        }
-    }
-
-    for tu in files.iter() {
-        log::trace!(
-            "  {}{} ({}) hdrs={} iby={}",
-            if tu.is_header { "[H] " } else { "    " },
-            tu.file_path, tu.size_label(),
-            tu.associated_headers.len(),
-            tu.included_by.len()
-        );
-    }
 }
 
 // ── File discovery ────────────────────────────────────────────────────────
@@ -303,8 +197,6 @@ fn load_from_compile_commands(path: &Path, project_root: &Path) -> Result<Vec<Tr
                 file_path: e.file,
                 file_size,
                 is_header: false,
-                associated_headers: vec![],
-                included_by: vec![],
             })
         })
         .collect();
@@ -335,8 +227,6 @@ fn load_from_walk(dir: &Path) -> Result<Vec<TranslationUnit>> {
                 file_path: path,
                 file_size,
                 is_header: hdr,
-                associated_headers: vec![],
-                included_by: vec![],
             }
         })
         .collect();
@@ -359,97 +249,9 @@ fn walk_headers(dir: &Path) -> Vec<TranslationUnit> {
                 file_path: e.path().to_string_lossy().into_owned(),
                 file_size,
                 is_header: true,
-                associated_headers: vec![],
-                included_by: vec![],
             }
         })
         .collect()
-}
-
-// ── Include analysis ──────────────────────────────────────────────────────
-
-/// Parse `#include "..."` directives from a source file using tree-sitter.
-/// Only quoted (local) includes are returned; `<system>` headers are skipped.
-fn extract_local_includes(path: &str, lang: &Language, query: &Query) -> Vec<String> {
-    let _s = crate::tracer::span("project::extract_includes");
-    let Ok(src) = fs::read_to_string(path) else { return vec![] };
-    let mut parser = Parser::new();
-    if parser.set_language(lang).is_err() { return vec![] }
-    let Some(tree) = parser.parse(&src, None) else { return vec![] };
-
-    let mut cursor = QueryCursor::new();
-    let mut out = Vec::new();
-
-    for (m, _) in cursor.captures(query, tree.root_node(), src.as_bytes()) {
-        let text = m.captures[0].node.utf8_text(src.as_bytes()).unwrap_or("");
-        // Strip surrounding quotes: "foo.h" → foo.h
-        let inner = text.trim_matches('"');
-        if !inner.is_empty() {
-            out.push(inner.to_string());
-        }
-    }
-    out
-}
-
-/// Resolve raw include strings (e.g. `"audio.h"`, `"spdlog/spdlog.h"`) to
-/// actual absolute file paths present in the project.
-///
-/// Resolution order (first match wins):
-/// 1. Relative to the source file's own directory.
-/// 2. Suffix match against all known header paths (handles `subdir/foo.h`).
-/// 3. Bare-filename match against all headers with that name.
-fn resolve_includes(
-    src_path: &str,
-    raw: &[String],
-    by_name: &HashMap<String, Vec<String>>,
-    by_suffix: &HashMap<String, String>,
-    _include_dirs: &[&str],
-) -> Vec<String> {
-    let src_dir = Path::new(src_path).parent().unwrap_or(Path::new(""));
-    let mut resolved: Vec<String> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-
-    for inc in raw {
-        // 1. Relative to source directory
-        let rel = src_dir.join(inc);
-        if let Ok(canon) = rel.canonicalize() {
-            let s = canon.to_string_lossy().into_owned();
-            if seen.insert(s.clone()) { resolved.push(s); }
-            continue;
-        }
-
-        // 2. Suffix match (handles include paths like "spdlog/fmt/fmt.h")
-        if let Some(full) = by_suffix.get(inc.as_str()) {
-            if seen.insert(full.clone()) { resolved.push(full.clone()); }
-            continue;
-        }
-
-        // 3. Bare filename fallback
-        let fname = Path::new(inc).file_name().and_then(|n| n.to_str()).unwrap_or(inc);
-        if let Some(candidates) = by_name.get(fname) {
-            if let Some(best) = pick_best(inc, candidates) {
-                if seen.insert(best.clone()) { resolved.push(best); }
-            }
-        }
-    }
-
-    resolved
-}
-
-/// Among multiple headers with the same filename, prefer the one whose path
-/// shares the longest common suffix with the raw include string.
-fn pick_best(raw_include: &str, candidates: &[String]) -> Option<String> {
-    candidates.iter()
-        .max_by_key(|c| {
-            // Count matching path components from the right
-            let raw_parts: Vec<&str> = raw_include.split('/').collect();
-            let cand_parts: Vec<&str> = c.split('/').collect();
-            raw_parts.iter().rev()
-                .zip(cand_parts.iter().rev())
-                .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
-                .count()
-        })
-        .cloned()
 }
 
 // ── CMake target discovery ────────────────────────────────────────────────
@@ -574,8 +376,6 @@ mod tests {
             file_path: path.to_string(),
             file_size: size,
             is_header: is_header(path),
-            associated_headers: vec![],
-            included_by: vec![],
         }
     }
 
