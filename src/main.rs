@@ -18,6 +18,7 @@ mod project;
 mod search;
 mod syntax;
 mod text_diff;
+mod tracer;
 mod ui;
 
 use app::App;
@@ -30,9 +31,13 @@ struct Cli {
     left: String,
     /// Second file to diff (optional)
     right: Option<String>,
+    /// Write a Chrome trace to this path on exit (requires --features bench build)
+    #[arg(long)]
+    trace: Option<String>,
 }
 
 fn main() -> Result<()> {
+    tracer::init();
 
     // Load config first so we know the desired log level before logging anything.
     let cfg = config::Config::load();
@@ -191,6 +196,10 @@ fn main() -> Result<()> {
         LeaveAlternateScreen
     )?;
     log::info!("mastdiff exiting cleanly");
+
+    if let Some(ref path) = cli.trace {
+        tracer::save(path)?;
+    }
 
     Ok(())
 }

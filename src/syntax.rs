@@ -25,6 +25,7 @@ pub struct SyntaxSpan {
 /// Parse `src` and return one `Vec<SyntaxSpan>` per line.
 /// Returns an empty outer vec on parse failure.
 pub fn highlight(src: &str) -> Vec<Vec<SyntaxSpan>> {
+    let _s = crate::tracer::span("syntax::highlight");
     let mut parser = Parser::new();
     let language   = tree_sitter_cpp::language();
     if parser.set_language(&language).is_err() {

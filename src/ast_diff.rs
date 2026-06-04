@@ -53,6 +53,7 @@ pub fn compute_ast_diff(
     left_source_start: usize,
     right_source_start: usize,
 ) -> Result<AstDiffResult> {
+    let _s = crate::tracer::span("ast::compute_diff");
     let mut parser = make_parser()?;
 
     let left_tree = parser
@@ -76,6 +77,7 @@ pub fn compute_ast_diff(
 
 /// Parse a single source file into a flat list of AST lines (no diff).
 pub fn parse_single(src: &str) -> Result<Vec<AstLine>> {
+    let _s = crate::tracer::span("ast::parse_single");
     let mut parser = make_parser()?;
     let tree = parser.parse(src, None).context("Failed to parse source")?;
     Ok(flatten_tree(tree.root_node(), src)
@@ -98,6 +100,7 @@ pub fn parse_single(src: &str) -> Result<Vec<AstLine>> {
 type FlatNode = (usize, String, Option<String>, usize, usize);
 
 fn flatten_tree(node: Node<'_>, src: &str) -> Vec<FlatNode> {
+    let _s = crate::tracer::span("ast::flatten_tree");
     let mut out = Vec::new();
     flatten_node(node, src, 0, &mut out);
     out
@@ -155,6 +158,7 @@ fn key_to_ast_line(s: &str, source_row: usize, status: NodeStatus) -> AstLine {
 }
 
 fn diff_flat_trees(left: &[FlatNode], right: &[FlatNode]) -> (Vec<AstLine>, Vec<AstLine>) {
+    let _s = crate::tracer::span("ast::diff_flat_trees");
     let left_joined = left.iter().map(node_to_key).collect::<Vec<_>>().join("\n");
     let right_joined = right.iter().map(node_to_key).collect::<Vec<_>>().join("\n");
 
@@ -242,6 +246,7 @@ pub fn visible_rows(
     right_nodes: &[AstLine],
     collapsed: &HashSet<usize>,
 ) -> Vec<usize> {
+    let _s = crate::tracer::span("ast::visible_rows");
     let n = left_nodes.len().max(right_nodes.len());
     let mut vis = Vec::with_capacity(n);
     let mut collapse_at: Option<usize> = None; // depth threshold; skip depth > this
@@ -283,6 +288,7 @@ pub fn row_depth(i: usize, left: &[AstLine], right: &[AstLine]) -> usize {
 
 /// Returns row indices that match the filter text (kind or leaf text), plus their ancestors.
 pub fn filter_rows(nodes: &[AstLine], filter: &str) -> Vec<usize> {
+    let _s = crate::tracer::span("ast::filter_rows");
     if filter.is_empty() {
         return (0..nodes.len()).collect();
     }

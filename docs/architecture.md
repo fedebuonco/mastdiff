@@ -147,12 +147,49 @@ non-UI-geometry state — all business logic lives in `app.rs`.
 
 ## Threading model
 
-| Thread | Purpose | Comm |
-|---|---|---|
-| Main | TUI render + event loop | — |
-| Project loader | Directory walk, `#include` parse, CMake parse | `mpsc::Sender<LoadMsg>` |
-| Search worker | Parallel tree-sitter / regex search across files | `mpsc::Sender<Vec<SearchResult>>` + `Arc<AtomicBool>` cancel |
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Main thread  (TUI event loop, ~50 ms tick)                     │
+│  Owns all App state. Never blocks — uses try_recv everywhere.   │
+└──────────────┬──────────────────────────────┬───────────────────┘
+               │                              │
+    mpsc::channel (unbounded)      mpsc::sync_channel(512) (bounded)
+    LoadMsg batches                Vec<SearchResult> batches
+               │                              │
+┌──────────────▼──────────┐   ┌──────────────▼────────────────────┐
+│  Project-loader thread  │   │  Search-dispatcher thread          │
+│  One, spawned on open.  │   │  Spawned fresh on each search.     │
+│                         │   │  Old one abandoned (cancel token). │
+│  walkdir + tree-sitter  │   │                                    │
+│  #include extraction    │   │  PreparedSearch::new()  ← once     │
+│  CMake parsing          │   │  files.par_iter()  ────────────►   │
+│                         │   │    for_each_with(tx, ...)          │
+│  Sends FilesBatch(25)   │   │                                    │
+│  Sends Finished(data)   │   │  Arc<AtomicBool> cancel signal     │
+└─────────────────────────┘   └────────────────────────────────────┘
+                                              │
+                                    Rayon global thread pool
+                                    One task per file; workers
+                                    share &PreparedSearch (Send+Sync)
+```
 
-Only one search worker is live at a time.  Starting a new search sets
-`search_cancel` to `true`, which causes the old worker to exit early via
-`cancel.load(Relaxed)` checks in the Rayon parallel iterator.
+| Thread | Lives | Channel | Cancel |
+|--------|-------|---------|--------|
+| Main | whole process | — | — |
+| Project loader | until load completes | `mpsc::channel` (unbounded) | channel close |
+| Search dispatcher | one per search call | `mpsc::sync_channel(512)` | `Arc<AtomicBool>` |
+| Rayon workers (×N) | global pool, persistent | via dispatcher's `SyncSender` clone | same `AtomicBool` |
+
+**Key design properties:**
+- The 512-batch bound on the search channel provides back-pressure — if the
+  main thread falls behind, workers block briefly rather than accumulating
+  unbounded memory.
+- `Parser` (tree-sitter) is `!Send` so it is created fresh per file inside
+  each Rayon task.  The `Query` object is `Send + Sync` and is compiled once
+  per search in `PreparedSearch`, then shared across all workers.
+- Cancellation is cooperative: Rayon tasks check `cancel.load(Relaxed)`
+  before each file.  Abandoned search threads drain naturally; they are never
+  killed.
+
+See [`docs/performance.md`](performance.md) for profiling methodology and
+search optimisation details.

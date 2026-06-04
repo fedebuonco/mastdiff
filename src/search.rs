@@ -22,6 +22,7 @@ use rayon::prelude::*;
 use regex::Regex;
 use tree_sitter::{Parser, Query, QueryCursor};
 
+
 // ── Predefined shorthand queries ──────────────────────────────────────────
 // Each query must have exactly one capture group named @match.
 // Multiple top-level patterns are fine — tree-sitter unions them.
@@ -163,6 +164,7 @@ impl SearchQuery {
 /// - `fn:text`, `call:text`, … → expand to predefined query, filter captures by `text`
 /// - anything else            → plain-text grep
 pub fn parse_query(raw: &str) -> SearchQuery {
+    let _s = crate::tracer::span("search::parse_query");
     let trimmed = raw.trim();
 
     // Raw tree-sitter query
@@ -356,6 +358,53 @@ fn glob_bytes(p: &[u8], t: &[u8]) -> bool {
     }
 }
 
+// ── Pre-compiled query (compile once, reuse across all files) ────────────
+
+/// Everything expensive that is identical for every file in one search pass.
+/// `Query::new` and regex compilation are moved here so the parallel workers
+/// only pay for parsing + cursor traversal.
+struct PreparedSearch {
+    ts_query: Query,
+    capture_regex: Option<Regex>,
+    capture_filter_cmp: String,
+}
+
+impl PreparedSearch {
+    fn new(query: &SearchQuery) -> Option<Self> {
+        if query.grep_mode || query.ts_query_src.is_empty() {
+            return None;
+        }
+        let lang = tree_sitter_cpp::language();
+        let ts_query = match Query::new(&lang, &query.ts_query_src) {
+            Ok(q) => q,
+            Err(e) => {
+                log::warn!("query compile error: {}", e);
+                return None;
+            }
+        };
+        let capture_filter_cmp = if query.case_sensitive {
+            query.capture_filter.clone()
+        } else {
+            query.capture_filter.to_lowercase()
+        };
+        let capture_regex = if query.use_regex && !query.capture_filter.is_empty() {
+            match regex::RegexBuilder::new(&query.capture_filter)
+                .case_insensitive(!query.case_sensitive)
+                .build()
+            {
+                Ok(re) => Some(re),
+                Err(e) => {
+                    log::warn!("capture filter regex error: {}", e);
+                    return None;
+                }
+            }
+        } else {
+            None
+        };
+        Some(Self { ts_query, capture_regex, capture_filter_cmp })
+    }
+}
+
 // ── Project-wide parallel search ─────────────────────────────────────────
 
 /// Streaming search — sends per-file result batches through `tx` as soon as
@@ -369,6 +418,7 @@ pub fn search_project_streaming(
     tx: mpsc::SyncSender<Vec<SearchResult>>,
     cancel: Arc<AtomicBool>,
 ) {
+    let _s = crate::tracer::span("search::project_streaming");
     if query.is_empty() {
         return;
     }
@@ -377,11 +427,12 @@ pub fn search_project_streaming(
         if query.grep_mode { "grep" } else { "ts-query" },
         files.len(),
     );
+    let prepared = PreparedSearch::new(query); // compile query once, share across workers
     files.par_iter().for_each_with(tx, |tx, f| {
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        let hits = search_file(f, query);
+        let hits = search_file_prepared(f, query, prepared.as_ref());
         if !hits.is_empty() {
             log::debug!("search: {} hits in {}", hits.len(), f);
             let _ = tx.send(hits); // silently drop if receiver gone (cancelled)
@@ -392,6 +443,7 @@ pub fn search_project_streaming(
 
 #[allow(dead_code)] // used by integration tests
 pub fn search_project(files: &[String], query: &SearchQuery) -> Vec<SearchResult> {
+    let _s = crate::tracer::span("search::project");
     if query.is_empty() {
         return vec![];
     }
@@ -402,10 +454,11 @@ pub fn search_project(files: &[String], query: &SearchQuery) -> Vec<SearchResult
         query.capture_filter,
         files.len(),
     );
+    let prepared = PreparedSearch::new(query); // compile query once, share across workers
     let mut results: Vec<SearchResult> = files
         .par_iter()
         .flat_map(|f| {
-            let hits = search_file(f, query);
+            let hits = search_file_prepared(f, query, prepared.as_ref());
             if !hits.is_empty() {
                 log::debug!("search: {} hits in {}", hits.len(), f);
             }
@@ -419,17 +472,149 @@ pub fn search_project(files: &[String], query: &SearchQuery) -> Vec<SearchResult
 
 // ── Single-file search ────────────────────────────────────────────────────
 
-pub fn search_file(file_path: &str, query: &SearchQuery) -> Vec<SearchResult> {
+/// Used by the parallel project search — reads the file then delegates to
+/// `search_src_prepared` which reuses the already-compiled `PreparedSearch`.
+fn search_file_prepared(
+    file_path: &str,
+    query: &SearchQuery,
+    prepared: Option<&PreparedSearch>,
+) -> Vec<SearchResult> {
+    let _s = crate::tracer::span("search::file");
+    let _io = crate::tracer::span("search::file::read");
     let Ok(src) = fs::read_to_string(file_path) else {
-        // Per ripgrep lesson: log and continue rather than aborting the whole search.
         log::warn!("cannot read {}: skipping", file_path);
         return vec![];
     };
+    drop(_io);
+    match prepared {
+        Some(p) => search_src_prepared(file_path, &src, query, p),
+        None    => search_src(file_path, &src, query),
+    }
+}
+
+/// Core search against already-loaded source, using a pre-compiled query.
+fn search_src_prepared(
+    file_path: &str,
+    src: &str,
+    query: &SearchQuery,
+    prepared: &PreparedSearch,
+) -> Vec<SearchResult> {
+    let _s = crate::tracer::span("search::src");
+
+    // Cheap pre-filter: if there's a capture filter, confirm the text exists in
+    // the file before paying the tree-sitter parse cost.  Eliminates ~95% of
+    // parse calls for typed queries like `fn:update` or `call:render`.
+    if !prepared.capture_filter_cmp.is_empty() {
+        let _pf = crate::tracer::span("search::src::prefilter");
+        let hit = if let Some(ref re) = prepared.capture_regex {
+            re.is_match(src)
+        } else if query.case_sensitive {
+            src.contains(prepared.capture_filter_cmp.as_str())
+        } else {
+            // case-insensitive: scan without allocating a lowercased copy by
+            // using a byte-level ASCII fold (sufficient for identifier names).
+            src.as_bytes()
+                .windows(prepared.capture_filter_cmp.len())
+                .any(|w| w.eq_ignore_ascii_case(prepared.capture_filter_cmp.as_bytes()))
+        };
+        if !hit {
+            return vec![];
+        }
+    }
+
+    let lang = tree_sitter_cpp::language();
+
+    let mut parser = {
+        let _t = crate::tracer::span("search::src::parser_init");
+        let mut p = Parser::new();
+        if p.set_language(&lang).is_err() {
+            return vec![];
+        }
+        p
+    };
+
+    let tree = {
+        let _t = crate::tracer::span("search::src::parse");
+        match parser.parse(src, None) {
+            Some(t) => t,
+            None => return vec![],
+        }
+    };
+
+    let mut cursor = QueryCursor::new();
+    let mut seen: HashSet<usize> = HashSet::new();
+    let mut out = Vec::new();
+
+    let _walk = crate::tracer::span("search::src::walk_captures");
+    for (m, capture_idx) in cursor.captures(&prepared.ts_query, tree.root_node(), src.as_bytes()) {
+        if out.len() >= MAX_RESULTS_PER_FILE {
+            log::debug!("per-file cap ({}) reached in {}", MAX_RESULTS_PER_FILE, file_path);
+            break;
+        }
+
+        let capture = m.captures[capture_idx];
+        let node = capture.node;
+        let byte_start = node.start_byte();
+
+        if !seen.insert(byte_start) {
+            continue;
+        }
+
+        if query.filter_nested_calls && call_is_nested(node) {
+            continue;
+        }
+
+        if let Some(ref re) = prepared.capture_regex {
+            let node_text = src.get(byte_start..node.end_byte()).unwrap_or("");
+            if !re.is_match(node_text) {
+                continue;
+            }
+        } else if !prepared.capture_filter_cmp.is_empty() {
+            let node_text = src.get(byte_start..node.end_byte()).unwrap_or("");
+            let cmp_text = if query.case_sensitive {
+                node_text.to_string()
+            } else {
+                node_text.to_lowercase()
+            };
+            if !cmp_text.contains(&prepared.capture_filter_cmp) {
+                continue;
+            }
+        }
+
+        let line = node.start_position().row;
+        let col = node.start_position().column;
+        let line_text = src.lines().nth(line).unwrap_or("");
+        let capture_name = prepared.ts_query.capture_names()[capture.index as usize].to_string();
+
+        out.push(SearchResult {
+            file_path: file_path.to_string(),
+            line,
+            col,
+            snippet: make_snippet(line_text, col),
+            node_kind: node.kind().to_string(),
+            capture_name,
+        });
+    }
+
+    out
+}
+
+#[allow(dead_code)] // used by integration tests and bench binary
+pub fn search_file(file_path: &str, query: &SearchQuery) -> Vec<SearchResult> {
+    let _s = crate::tracer::span("search::file");
+    let _io = crate::tracer::span("search::file::read");
+    let Ok(src) = fs::read_to_string(file_path) else {
+        log::warn!("cannot read {}: skipping", file_path);
+        return vec![];
+    };
+    drop(_io);
     search_src(file_path, &src, query)
 }
 
 pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<SearchResult> {
+    let _s = crate::tracer::span("search::src");
     if query.grep_mode {
+        let _g = crate::tracer::span("search::src::grep");
         return grep(file_path, src, &query.raw, query.use_regex, query.case_sensitive);
     }
     if query.ts_query_src.is_empty() {
@@ -438,24 +623,37 @@ pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<Search
 
     let lang = tree_sitter_cpp::language();
 
-    let ts_query = match Query::new(&lang, &query.ts_query_src) {
-        Ok(q) => q,
-        Err(e) => {
-            log::warn!("query compile error in {}: {}", file_path, e);
-            return vec![];
+    let ts_query = {
+        let _t = crate::tracer::span("search::src::query_compile");
+        match Query::new(&lang, &query.ts_query_src) {
+            Ok(q) => q,
+            Err(e) => {
+                log::warn!("query compile error in {}: {}", file_path, e);
+                return vec![];
+            }
         }
     };
 
-    let mut parser = Parser::new();
-    if parser.set_language(&lang).is_err() {
-        return vec![];
-    }
-    let Some(tree) = parser.parse(src, None) else {
-        return vec![];
+    let mut parser = {
+        let _t = crate::tracer::span("search::src::parser_init");
+        let mut p = Parser::new();
+        if p.set_language(&lang).is_err() {
+            return vec![];
+        }
+        p
+    };
+
+    let tree = {
+        let _t = crate::tracer::span("search::src::parse");
+        match parser.parse(src, None) {
+            Some(t) => t,
+            None => return vec![],
+        }
     };
 
     // Compile the capture filter — regex or plain substring.
     // We do this once per file rather than per-capture to avoid repeated compilation.
+    let _fc = crate::tracer::span("search::src::filter_compile");
     let capture_filter_cmp = if query.case_sensitive {
         query.capture_filter.clone()
     } else {
@@ -475,11 +673,13 @@ pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<Search
     } else {
         None
     };
+    drop(_fc);
 
     let mut cursor = QueryCursor::new();
     let mut seen: HashSet<usize> = HashSet::new();
     let mut out = Vec::new();
 
+    let _walk = crate::tracer::span("search::src::walk_captures");
     for (m, capture_idx) in cursor.captures(&ts_query, tree.root_node(), src.as_bytes()) {
         if out.len() >= MAX_RESULTS_PER_FILE {
             log::debug!("per-file cap ({}) reached in {}", MAX_RESULTS_PER_FILE, file_path);

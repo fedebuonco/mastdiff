@@ -40,6 +40,7 @@ pub struct DiffLine {
 }
 
 pub fn compute_diff(left: &str, right: &str, ignore_ws: bool) -> Vec<DiffLine> {
+    let _s = crate::tracer::span("text_diff::compute_diff");
     let (lp, rp) = if ignore_ws {
         (normalize_ws(left), normalize_ws(right))
     } else {
@@ -127,6 +128,7 @@ fn flush_bufs(
 
 /// Compute character-level diff spans for a pair of changed lines.
 pub fn inline_spans(left: &str, right: &str) -> (Vec<InlineSpan>, Vec<InlineSpan>) {
+    let _s = crate::tracer::span("text_diff::inline_spans");
     let diff = TextDiff::from_chars(left, right);
     let mut ls: Vec<InlineSpan> = Vec::new();
     let mut rs: Vec<InlineSpan> = Vec::new();

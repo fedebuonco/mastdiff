@@ -467,6 +467,7 @@ impl App {
 
     /// Called when the background loader delivers a batch or the final result.
     pub fn handle_load_msg(&mut self, msg: crate::project::LoadMsg) {
+        let _s = crate::tracer::span("app::handle_load_msg");
         use crate::project::LoadMsg;
         match msg {
             LoadMsg::FilesBatch(tus) => {
@@ -482,6 +483,7 @@ impl App {
     /// Replace the (possibly partial) file list with the fully-analysed data
     /// and mark loading as complete.
     pub fn finish_project_load(&mut self, data: crate::project::ProjectData) {
+        let _s = crate::tracer::span("app::finish_project_load");
         self.project_files = data.files;
         self.cmake_targets = data.cmake_targets;
         self.loading = false;
@@ -495,6 +497,7 @@ impl App {
     /// the search/file view.  Project state (`project_files`, `project_cursor`,
     /// etc.) is preserved intact so that `Esc` can navigate back.
     fn open_project_file(&mut self, path: String, content: String) {
+        let _s = crate::tracer::span("app::open_project_file");
         self.load_file_into_search_pane(&path, &content);
         // Clear any prior search so the results list is empty and only the file
         // content is visible in the right pane.
@@ -519,6 +522,7 @@ impl App {
     /// search results or mode.  Used both by [`open_project_file`] and by the
     /// search result loader.
     fn load_file_into_search_pane(&mut self, path: &str, content: &str) {
+        let _s = crate::tracer::span("app::load_file_into_search_pane");
         self.search_open_file = path.to_string();
         self.search_source_lines = content.lines().map(|l| l.to_string()).collect();
         self.search_source_tokens = crate::syntax::highlight(content);
@@ -534,6 +538,7 @@ impl App {
 
     /// Recompute `search_ast_visible` from the current nodes + collapsed set.
     pub fn rebuild_search_ast_visible(&mut self) {
+        let _s = crate::tracer::span("app::rebuild_search_ast_visible");
         let dummy: Vec<AstLine> = vec![];
         self.search_ast_visible =
             visible_rows(&self.search_ast_nodes, &dummy, &self.search_ast_collapsed);
@@ -556,6 +561,7 @@ impl App {
     // ── Event dispatch ────────────────────────────────────────────────────
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        let _s = crate::tracer::span("app::handle_key");
         log::trace!("key {:?} mod={:?} in mode {:?}", key.code, key.modifiers, self.mode);
 
         // Global: '?' opens help from any mode (except when typing in a search box)
@@ -927,6 +933,7 @@ impl App {
     }
 
     fn rebuild_ast_visible(&mut self) {
+        let _s = crate::tracer::span("app::rebuild_ast_visible");
         if let Some(ref result) = self.ast_result {
             self.ast_visible =
                 visible_rows(&result.left_nodes, &result.right_nodes, &self.ast_collapsed);
@@ -950,6 +957,7 @@ impl App {
     // ── AST diff launch ───────────────────────────────────────────────────
 
     fn launch_ast_diff(&mut self, disp_start: usize, disp_end: usize) {
+        let _s = crate::tracer::span("app::launch_ast_diff");
         let ds = self.display_to_diff(disp_start);
         let de = self.display_to_diff(disp_end);
 
@@ -1682,6 +1690,7 @@ impl App {
     }
 
     pub fn rebuild_project_display(&mut self) {
+        let _s = crate::tracer::span("app::rebuild_project_display");
         let filter = self.project_filter.as_str().to_lowercase();
         let mut rows: Vec<ProjectRow> = Vec::new();
 
@@ -1966,6 +1975,7 @@ impl App {
     }
 
     fn run_search(&mut self) {
+        let _s = crate::tracer::span("app::run_search");
         let raw = self.search_input.as_str().to_string();
         if raw.is_empty() {
             self.status_msg = String::from(" Empty query. Type a search term. ");
@@ -2066,6 +2076,7 @@ impl App {
     /// Drain pending result batches from the background search thread.
     /// Call once per main-loop tick (≈ every 50 ms).
     pub fn tick_search(&mut self) {
+        let _s = crate::tracer::span("app::tick_search");
         // ── Debounce: fire a new search 300 ms after the last keystroke ────
         if let Some(t) = self.search_debounce {
             if t.elapsed() >= std::time::Duration::from_millis(300) {
@@ -2163,6 +2174,7 @@ impl App {
     }
 
     fn load_search_result(&mut self, idx: usize) {
+        let _s = crate::tracer::span("app::load_search_result");
         let Some(result) = self.search_results.get(idx).cloned() else {
             return;
         };

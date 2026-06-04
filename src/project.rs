@@ -20,7 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use tree_sitter::{Parser, Query, QueryCursor};
+use tree_sitter::{Language, Parser, Query, QueryCursor};
 use serde::Deserialize;
 use walkdir::WalkDir;
 
@@ -91,6 +91,7 @@ pub enum LoadMsg {
 /// Used when the full result is needed before proceeding (e.g. integration tests).
 #[allow(dead_code)]
 pub fn load(dir: &Path) -> Result<ProjectData> {
+    let _s = crate::tracer::span("project::load");
     let mut files = if let Some(cc) = find_compile_commands(dir) {
         log::info!("project loader: compile_commands.json at {:?}", cc);
         let tus = load_from_compile_commands(&cc, dir)?;
@@ -117,6 +118,7 @@ pub fn load(dir: &Path) -> Result<ProjectData> {
 /// Designed to run on a background thread; returns early if the receiver
 /// has been dropped.
 pub fn load_streaming(dir: &Path, tx: &std::sync::mpsc::Sender<LoadMsg>) -> Result<()> {
+    let _s = crate::tracer::span("project::load_streaming");
     const BATCH: usize = 25;
 
     // ── Phase 1: enumerate files and stream batches to the UI ────────────
@@ -179,6 +181,12 @@ pub fn load_streaming(dir: &Path, tx: &std::sync::mpsc::Sender<LoadMsg>) -> Resu
 /// Parse `#include "…"` directives in every source file, resolve them to
 /// paths in the project, and fill `associated_headers` / `included_by`.
 fn analyze_includes(files: &mut [TranslationUnit]) {
+    let _s = crate::tracer::span("project::analyze_includes");
+    let lang = tree_sitter_cpp::language();
+    let inc_query = match Query::new(&lang, r#"(preproc_include path: (string_literal) @path)"#) {
+        Ok(q) => q,
+        Err(e) => { log::error!("include query compile failed: {}", e); return; }
+    };
     let header_paths: HashSet<String> = files
         .iter()
         .filter(|tu| tu.is_header)
@@ -221,7 +229,7 @@ fn analyze_includes(files: &mut [TranslationUnit]) {
 
     for &si in &source_indices {
         let src_path = files[si].file_path.clone();
-        let raw_includes = extract_local_includes(&src_path);
+        let raw_includes = extract_local_includes(&src_path, &lang, &inc_query);
         let inc_dirs: Vec<&str> = include_dirs.iter().map(|s| s.as_str()).collect();
         let resolved = resolve_includes(
             &src_path,
@@ -279,6 +287,7 @@ fn find_compile_commands(dir: &Path) -> Option<PathBuf> {
 }
 
 fn load_from_compile_commands(path: &Path, project_root: &Path) -> Result<Vec<TranslationUnit>> {
+    let _s = crate::tracer::span("project::load_compile_commands");
     let raw = fs::read_to_string(path)?;
     let entries: Vec<CompileEntry> = serde_json::from_str(&raw)?;
 
@@ -311,6 +320,7 @@ fn load_from_compile_commands(path: &Path, project_root: &Path) -> Result<Vec<Tr
 
 #[allow(dead_code)]
 fn load_from_walk(dir: &Path) -> Result<Vec<TranslationUnit>> {
+    let _s = crate::tracer::span("project::load_from_walk");
     let mut tus: Vec<TranslationUnit> = WalkDir::new(dir)
         .follow_links(true)
         .into_iter()
@@ -336,6 +346,7 @@ fn load_from_walk(dir: &Path) -> Result<Vec<TranslationUnit>> {
 }
 
 fn walk_headers(dir: &Path) -> Vec<TranslationUnit> {
+    let _s = crate::tracer::span("project::walk_headers");
     WalkDir::new(dir)
         .follow_links(true)
         .into_iter()
@@ -359,19 +370,17 @@ fn walk_headers(dir: &Path) -> Vec<TranslationUnit> {
 
 /// Parse `#include "..."` directives from a source file using tree-sitter.
 /// Only quoted (local) includes are returned; `<system>` headers are skipped.
-fn extract_local_includes(path: &str) -> Vec<String> {
+fn extract_local_includes(path: &str, lang: &Language, query: &Query) -> Vec<String> {
+    let _s = crate::tracer::span("project::extract_includes");
     let Ok(src) = fs::read_to_string(path) else { return vec![] };
     let mut parser = Parser::new();
-    let lang = tree_sitter_cpp::language();
-    if parser.set_language(&lang).is_err() { return vec![] }
+    if parser.set_language(lang).is_err() { return vec![] }
     let Some(tree) = parser.parse(&src, None) else { return vec![] };
 
-    let query_src = r#"(preproc_include path: (string_literal) @path)"#;
-    let Ok(query) = Query::new(&lang, query_src) else { return vec![] };
     let mut cursor = QueryCursor::new();
     let mut out = Vec::new();
 
-    for (m, _) in cursor.captures(&query, tree.root_node(), src.as_bytes()) {
+    for (m, _) in cursor.captures(query, tree.root_node(), src.as_bytes()) {
         let text = m.captures[0].node.utf8_text(src.as_bytes()).unwrap_or("");
         // Strip surrounding quotes: "foo.h" → foo.h
         let inner = text.trim_matches('"');
@@ -446,6 +455,7 @@ fn pick_best(raw_include: &str, candidates: &[String]) -> Option<String> {
 // ── CMake target discovery ────────────────────────────────────────────────
 
 fn find_cmake_targets(dir: &Path) -> Vec<CmakeTarget> {
+    let _s = crate::tracer::span("project::find_cmake_targets");
     let mut targets: Vec<CmakeTarget> = Vec::new();
     let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
