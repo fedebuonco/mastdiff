@@ -80,7 +80,7 @@ impl OpenIn {
 
 // ── Config ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     /// Which external editor to open files in when the user presses Ctrl+o.
     #[serde(default)]
@@ -90,6 +90,23 @@ pub struct Config {
     /// One of: off, error, warn, info, debug, trace  (default: info)
     #[serde(default)]
     pub log_level: LogLevel,
+
+    /// Maximum source bytes (in MiB) kept in the in-memory AST parse cache.
+    /// Set to 0 to disable caching entirely.  Default: 128.
+    #[serde(default = "default_ast_cache_mb")]
+    pub ast_cache_mb: u64,
+}
+
+fn default_ast_cache_mb() -> u64 { 128 }
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            open_in: OpenIn::default(),
+            log_level: LogLevel::default(),
+            ast_cache_mb: default_ast_cache_mb(),
+        }
+    }
 }
 
 impl Config {
@@ -210,5 +227,22 @@ mod tests {
         assert_eq!(LogLevel::Debug.to_level_filter(), log::LevelFilter::Debug);
         assert_eq!(LogLevel::Off.to_level_filter(),   log::LevelFilter::Off);
         assert_eq!(LogLevel::Trace.to_level_filter(), log::LevelFilter::Trace);
+    }
+
+    #[test]
+    fn default_ast_cache_mb_is_128() {
+        assert_eq!(Config::default().ast_cache_mb, 128);
+    }
+
+    #[test]
+    fn parse_ast_cache_mb() {
+        let cfg: Config = toml::from_str("ast_cache_mb = 256").unwrap();
+        assert_eq!(cfg.ast_cache_mb, 256);
+    }
+
+    #[test]
+    fn ast_cache_mb_zero_disables() {
+        let cfg: Config = toml::from_str("ast_cache_mb = 0").unwrap();
+        assert_eq!(cfg.ast_cache_mb, 0);
     }
 }

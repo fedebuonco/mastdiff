@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -10,6 +10,7 @@ use crate::ast_diff::{
     compute_ast_diff, filter_rows, parse_single, row_has_children, visible_rows,
     AstDiffResult, AstLine,
 };
+use crate::ast_cache::AstCache;
 use crate::config::Config;
 use crate::export;
 use crate::input::TextInput;
@@ -212,6 +213,9 @@ pub struct App {
 
     // ---- config
     pub config: Config,
+    /// Shared in-memory AST parse cache. Keyed by (path, mtime); capped by
+    /// `config.ast_cache_mb` bytes of source content.
+    pub ast_cache: Arc<Mutex<AstCache>>,
     /// Set to Some(file, line, col) when the user presses Ctrl+o.
     /// The main event loop drains this and opens the file in the configured editor.
     pub pending_open: Option<(String, usize, usize)>,
@@ -318,6 +322,7 @@ impl App {
             help_prev_mode: AppMode::TextDiff,
             should_quit: false,
             status_msg: Self::text_diff_hint(false),
+            ast_cache: Arc::new(Mutex::new(AstCache::new(config.ast_cache_mb))),
             config,
             pending_open: None,
             search_results_area: Rect::default(),
@@ -445,6 +450,7 @@ impl App {
             help_prev_mode: AppMode::ProjectBrowser,
             should_quit: false,
             status_msg: String::from(" ⚙ Indexing… "),
+            ast_cache: Arc::new(Mutex::new(AstCache::new(config.ast_cache_mb))),
             config,
             pending_open: None,
             search_results_area: Rect::default(),
@@ -2037,8 +2043,9 @@ impl App {
         self.search_rx = Some(rx);
 
         let query = self.search_query.clone();
+        let cache = Arc::clone(&self.ast_cache);
         std::thread::spawn(move || {
-            search_project_streaming(&file_paths, &query, tx, cancel);
+            search_project_streaming(&file_paths, &query, tx, cancel, cache);
         });
 
         self.status_msg = format!(
