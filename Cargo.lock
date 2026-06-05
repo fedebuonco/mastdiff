@@ -573,6 +573,7 @@ dependencies = [
  "arboard",
  "clap",
  "crossterm",
+ "indexmap",
  "log",
  "ratatui",
  "rayon",

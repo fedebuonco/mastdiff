@@ -13,14 +13,18 @@
 //! [`search_project`] runs searches in parallel across all files using Rayon
 //! and returns deduplicated, sorted [`SearchResult`]s.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::SystemTime;
 
 use rayon::prelude::*;
 use regex::Regex;
-use tree_sitter::{Parser, Query, QueryCursor};
+use tree_sitter::{Parser, Query, QueryCursor, Tree};
+
+use crate::ast_cache::AstCache;
 
 
 // ── Predefined shorthand queries ──────────────────────────────────────────
@@ -417,6 +421,7 @@ pub fn search_project_streaming(
     query: &SearchQuery,
     tx: mpsc::SyncSender<Vec<SearchResult>>,
     cancel: Arc<AtomicBool>,
+    ast_cache: Arc<Mutex<AstCache>>,
 ) {
     let _s = crate::tracer::span("search::project_streaming");
     if query.is_empty() {
@@ -428,17 +433,64 @@ pub fn search_project_streaming(
         files.len(),
     );
     let prepared = PreparedSearch::new(query); // compile query once, share across workers
+
+    // ── Phase 1: build cached-tree map (single-threaded, before Rayon) ─────
+    // Skipped for grep queries — no tree-sitter parse cost to save.
+    let cached_trees: HashMap<PathBuf, Tree> = if !query.grep_mode {
+        let mut cache = ast_cache.lock().unwrap();
+        if cache.is_enabled() {
+            files.iter().filter_map(|f| {
+                let path = PathBuf::from(f);
+                let mtime = fs::metadata(&path).ok()?.modified().ok()?;
+                cache.get(&path, mtime).map(|tree| (path, tree))
+            }).collect()
+        } else {
+            HashMap::new()
+        }
+        // MutexGuard dropped here — lock released before Rayon
+    } else {
+        HashMap::new()
+    };
+
+    // ── Phase 3 accumulator: workers push new entries here ──────────────────
+    let new_entries: Mutex<Vec<NewCacheEntry>> = Mutex::new(Vec::new());
+
+    // ── Phase 2: parallel search ─────────────────────────────────────────────
     files.par_iter().for_each_with(tx, |tx, f| {
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        let hits = search_file_prepared(f, query, prepared.as_ref());
+        let path = PathBuf::from(f.as_str());
+        let cached = cached_trees.get(&path);
+        let (hits, new_entry) = search_file_prepared(f, query, prepared.as_ref(), cached);
+        if let Some(entry) = new_entry {
+            new_entries.lock().unwrap().push(entry);
+        }
         if !hits.is_empty() {
             log::debug!("search: {} hits in {}", hits.len(), f);
             let _ = tx.send(hits); // silently drop if receiver gone (cancelled)
         }
     });
     // tx is dropped here → channel closes → receiver sees Disconnected
+
+    // ── Phase 3: merge newly parsed trees into cache ─────────────────────────
+    let entries = new_entries.into_inner().unwrap();
+    if !entries.is_empty() {
+        let n = entries.len();
+        let mut cache = ast_cache.lock().unwrap();
+        for e in entries {
+            cache.insert(e.path, e.mtime, e.tree, e.source_len);
+        }
+        log::debug!("ast_cache: inserted {} new entries", n);
+    }
+}
+
+// Carried from search_file_prepared back up to search_project_streaming for caching.
+struct NewCacheEntry {
+    path: PathBuf,
+    mtime: SystemTime,
+    tree: Tree,
+    source_len: usize,
 }
 
 #[allow(dead_code)] // used by integration tests
@@ -458,7 +510,7 @@ pub fn search_project(files: &[String], query: &SearchQuery) -> Vec<SearchResult
     let mut results: Vec<SearchResult> = files
         .par_iter()
         .flat_map(|f| {
-            let hits = search_file_prepared(f, query, prepared.as_ref());
+            let (hits, _) = search_file_prepared(f, query, prepared.as_ref(), None);
             if !hits.is_empty() {
                 log::debug!("search: {} hits in {}", hits.len(), f);
             }
@@ -474,31 +526,48 @@ pub fn search_project(files: &[String], query: &SearchQuery) -> Vec<SearchResult
 
 /// Used by the parallel project search — reads the file then delegates to
 /// `search_src_prepared` which reuses the already-compiled `PreparedSearch`.
+/// Returns search results and, on a cache miss parse, a `NewCacheEntry` to store.
 fn search_file_prepared(
     file_path: &str,
     query: &SearchQuery,
     prepared: Option<&PreparedSearch>,
-) -> Vec<SearchResult> {
+    cached_tree: Option<&Tree>,
+) -> (Vec<SearchResult>, Option<NewCacheEntry>) {
     let _s = crate::tracer::span("search::file");
     let _io = crate::tracer::span("search::file::read");
     let Ok(src) = fs::read_to_string(file_path) else {
         log::warn!("cannot read {}: skipping", file_path);
-        return vec![];
+        return (vec![], None);
     };
     drop(_io);
     match prepared {
-        Some(p) => search_src_prepared(file_path, &src, query, p),
-        None    => search_src(file_path, &src, query),
+        Some(p) => {
+            let (results, new_tree) = search_src_prepared(file_path, &src, query, p, cached_tree);
+            let new_entry = new_tree.and_then(|tree| {
+                let mtime = fs::metadata(file_path).ok()?.modified().ok()?;
+                Some(NewCacheEntry {
+                    path: PathBuf::from(file_path),
+                    mtime,
+                    tree,
+                    source_len: src.len(),
+                })
+            });
+            (results, new_entry)
+        }
+        None => (search_src(file_path, &src, query), None),
     }
 }
 
 /// Core search against already-loaded source, using a pre-compiled query.
+/// Returns results and, when the tree was freshly parsed (no cache hit),
+/// the owned `Tree` so the caller can store it in the AST cache.
 fn search_src_prepared(
     file_path: &str,
     src: &str,
     query: &SearchQuery,
     prepared: &PreparedSearch,
-) -> Vec<SearchResult> {
+    cached_tree: Option<&Tree>,
+) -> (Vec<SearchResult>, Option<Tree>) {
     let _s = crate::tracer::span("search::src");
 
     // Cheap pre-filter: if there's a capture filter, confirm the text exists in
@@ -518,26 +587,31 @@ fn search_src_prepared(
                 .any(|w| w.eq_ignore_ascii_case(prepared.capture_filter_cmp.as_bytes()))
         };
         if !hit {
-            return vec![];
+            return (vec![], None);
         }
     }
 
-    let lang = tree_sitter_cpp::language();
-
-    let mut parser = {
-        let _t = crate::tracer::span("search::src::parser_init");
-        let mut p = Parser::new();
-        if p.set_language(&lang).is_err() {
-            return vec![];
-        }
-        p
-    };
-
-    let tree = {
+    // Use the cached tree if available; otherwise parse.
+    // `for_cache` is Some(tree) when we parsed (so the caller can cache it).
+    let (tree, for_cache): (Tree, Option<Tree>) = if let Some(t) = cached_tree {
+        (t.clone(), None) // cheap ts_tree_copy; no new entry needed
+    } else {
+        let lang = tree_sitter_cpp::language();
+        let mut parser = {
+            let _t = crate::tracer::span("search::src::parser_init");
+            let mut p = Parser::new();
+            if p.set_language(&lang).is_err() {
+                return (vec![], None);
+            }
+            p
+        };
         let _t = crate::tracer::span("search::src::parse");
         match parser.parse(src, None) {
-            Some(t) => t,
-            None => return vec![],
+            Some(t) => {
+                let cache_copy = t.clone();
+                (t, Some(cache_copy))
+            }
+            None => return (vec![], None),
         }
     };
 
@@ -596,7 +670,7 @@ fn search_src_prepared(
         });
     }
 
-    out
+    (out, for_cache)
 }
 
 #[allow(dead_code)] // used by integration tests and bench binary

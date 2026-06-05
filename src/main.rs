@@ -9,6 +9,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{fs, io, panic, path::Path, sync::mpsc, time::Duration};
 
 mod app;
+mod ast_cache;
 mod ast_diff;
 mod config;
 mod export;
