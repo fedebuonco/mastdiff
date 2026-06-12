@@ -1,0 +1,109 @@
+{
+  "name": "mastdiff-search",
+  "displayName": "mastdiff: Semantic C++ Search",
+  "description": "Structural, tree-sitter-powered C++ search inside VS Code — find function definitions, call sites, classes, fields and more with simple fn:/call:/class: queries or raw tree-sitter S-expressions.",
+  "version": "0.1.0",
+  "publisher": "fedebuonco",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fedebuonco/mastdiff"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "c++",
+    "cpp",
+    "tree-sitter",
+    "structural search",
+    "semantic search"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "mastdiff.search",
+        "title": "mastdiff: Semantic C++ Search"
+      },
+      {
+        "command": "mastdiff.findCalls",
+        "title": "mastdiff: Find Calls to Symbol Under Cursor"
+      },
+      {
+        "command": "mastdiff.findDefinitions",
+        "title": "mastdiff: Find Function Definitions of Symbol Under Cursor"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "mastdiff.search",
+        "key": "ctrl+alt+f",
+        "mac": "cmd+alt+f"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "mastdiff.findCalls",
+          "when": "editorLangId == cpp",
+          "group": "navigation@90"
+        },
+        {
+          "command": "mastdiff.findDefinitions",
+          "when": "editorLangId == cpp",
+          "group": "navigation@91"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "mastdiff",
+      "properties": {
+        "mastdiff.binaryPath": {
+          "type": "string",
+          "default": "mastdiff",
+          "description": "Path to the mastdiff binary. Defaults to 'mastdiff' on PATH."
+        },
+        "mastdiff.include": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-separated include globs applied to every search (e.g. \"src/**,*.hpp\"). Empty = search everything."
+        },
+        "mastdiff.exclude": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-separated exclude globs applied to every search (e.g. \"tests/**,vendor/**\")."
+        },
+        "mastdiff.debounceMs": {
+          "type": "number",
+          "default": 300,
+          "description": "Debounce in milliseconds before a search fires while typing."
+        },
+        "mastdiff.maxResults": {
+          "type": "number",
+          "default": 500,
+          "description": "Maximum number of results shown in the picker."
+        },
+        "mastdiff.previewResults": {
+          "type": "boolean",
+          "default": true,
+          "description": "Preview the highlighted result in the editor while navigating the picker."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
