@@ -2,7 +2,7 @@
   "name": "mastdiff-search",
   "displayName": "mastdiff: Semantic C++ Search",
   "description": "Structural, tree-sitter-powered C++ search inside VS Code — find function definitions, call sites, classes, fields and more with simple fn:/call:/class: queries or raw tree-sitter S-expressions.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "fedebuonco",
   "repository": {
     "type": "git",
@@ -104,7 +104,7 @@
         "mastdiff.maxResults": {
           "type": "number",
           "default": 500,
-          "description": "Maximum number of results shown in the results list."
+          "description": "Number of results rendered per page in the results list; the 'Show more' button loads the next page. All results are always fetched."
         },
         "mastdiff.historySize": {
           "type": "number",

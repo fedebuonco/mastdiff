@@ -4,6 +4,36 @@ body {
     color: var(--vscode-foreground);
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
+    /* Fixed-height column: the search box, chips, and filters stay put and
+       only the results list (#results) / history list scrolls. */
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+#pane-search {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+/* Everything above the results list keeps its natural height */
+#pane-search > :not(#results) {
+    flex: none;
+}
+
+#pane-history {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+/* flex/grid display on the panes would defeat the hidden attribute */
+#pane-search[hidden],
+#pane-history[hidden] {
+    display: none;
 }
 
 /* ── Tabs ─────────────────────────────────────────────────────────────── */
@@ -194,6 +224,27 @@ body {
 
 #results {
     margin: 0 -8px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.show-more {
+    display: block;
+    width: calc(100% - 16px);
+    margin: 6px 8px;
+    padding: 3px 8px;
+    background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.15));
+    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+    border: 1px solid var(--vscode-button-border, transparent);
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+}
+
+.show-more:hover {
+    background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.25));
 }
 
 .file-row {
@@ -247,6 +298,11 @@ body {
     padding: 1px 8px 1px 24px;
     white-space: nowrap;
     overflow: hidden;
+}
+
+/* Zebra striping (restarts per file group) for easier row scanning */
+.match-row:nth-child(even) {
+    background: rgba(128, 128, 128, 0.08);
 }
 
 .match-row:hover {

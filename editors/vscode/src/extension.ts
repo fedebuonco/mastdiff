@@ -141,11 +141,16 @@ function spawnDaemon(root: string): Promise<number | undefined> {
         });
 
         proc.on('error', () => { rl.close(); resolve(undefined); });
+        // An immediate exit (e.g. an old binary that doesn't know --daemon)
+        // must fail over to the subprocess path right away, not after the
+        // READY timeout below.
         proc.on('exit', () => {
             if (daemonProc === proc) {
                 daemonProc = undefined;
                 daemonPort = undefined;
             }
+            rl.close();
+            resolve(undefined);
         });
 
         // Give the daemon up to 20 s to load the project and signal ready.
@@ -401,6 +406,7 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
                     include: config().get<string>('include', ''),
                     exclude: config().get<string>('exclude', ''),
                     debounceMs: config().get<number>('debounceMs', 300),
+                    pageSize: config().get<number>('maxResults', 500),
                     query: this.pendingQuery ?? '',
                 });
                 this.pendingQuery = undefined;
@@ -457,8 +463,7 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
 
             if (mine !== this.generation) { return; }
 
-            const max = config().get<number>('maxResults', 500);
-            const shown: WebviewHit[] = hits.slice(0, max).map((h) => {
+            const shown: WebviewHit[] = hits.map((h) => {
                 const abs = path.isAbsolute(h.file) ? h.file : path.join(root, h.file);
                 return { ...h, file: abs, rel: path.relative(root, abs) };
             });

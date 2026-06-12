@@ -151,7 +151,6 @@
     $('#clear-history').addEventListener('click', () => vscode.postMessage({ type: 'clearHistory' }));
 
     // ── Collapse / expand all file groups ────────────────────────────────
-    let fileGroups = []; // [{matches, twistie}] for the current result set
     let allCollapsed = false;
 
     function updateCollapseBtn() {
@@ -161,7 +160,7 @@
 
     collapseAllBtn.addEventListener('click', () => {
         allCollapsed = !allCollapsed;
-        for (const g of fileGroups) {
+        for (const g of groups.values()) {
             g.matches.hidden = allCollapsed;
             g.twistie.textContent = allCollapsed ? '▸' : '▾';
         }
@@ -169,94 +168,135 @@
     });
 
     // ── Results rendering (grouped by file, like the built-in Search) ────
-    function renderResults(hits, total, stats) {
-        resultsEl.textContent = '';
-        fileGroups = [];
-        allCollapsed = false;
-        updateCollapseBtn();
-        const byFile = new Map();
-        for (const h of hits) {
-            if (!byFile.has(h.rel)) {
-                byFile.set(h.rel, []);
-            }
-            byFile.get(h.rel).push(h);
-        }
-        collapseAllBtn.hidden = byFile.size === 0;
+    // The full hit list stays in memory; only `pageSize` rows are added to
+    // the DOM per page, with a "Show more" button to append the next page.
+    // A file's hits may span page boundaries, so groups are kept in a map
+    // and late pages merge into the existing group.
+    let pageSize = 500;
+    let allHits = [];
+    let renderedCount = 0;
+    let totalFiles = 0;
+    let lastStats = null;
+    let groups = new Map(); // rel → {matches, twistie, badge, count}
+    const showMoreBtn = document.createElement('button');
+    showMoreBtn.className = 'show-more';
+    showMoreBtn.addEventListener('click', renderNextPage);
 
-        const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-        let summary = `${plural(total, 'result')} in ${plural(byFile.size, 'file')}`;
-        if (total > hits.length) {
-            summary += ` — showing first ${hits.length}`;
+    const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+    function updateStatus() {
+        const total = allHits.length;
+        if (total === 0) {
+            statusEl.textContent =
+                `No results found.${lastStats ? ` · ${lastStats.elapsedMs} ms` : ''}`;
+            return;
         }
-        if (stats) {
-            summary += ` · ${stats.elapsedMs} ms`;
-            if (stats.engine === 'daemon') {
-                const hitsN = stats.cacheHits || 0;
+        let summary = `${plural(total, 'result')} in ${plural(totalFiles, 'file')}`;
+        if (renderedCount < total) {
+            summary += ` — showing first ${renderedCount}`;
+        }
+        if (lastStats) {
+            summary += ` · ${lastStats.elapsedMs} ms`;
+            if (lastStats.engine === 'daemon') {
+                const hitsN = lastStats.cacheHits || 0;
                 summary += hitsN > 0
-                    ? ` · ⚡ cached (${hitsN}/${stats.filesSearched} files)`
+                    ? ` · ⚡ cached (${hitsN}/${lastStats.filesSearched} files)`
                     : ' · not cached';
             } else {
                 summary += ' · not cached (cold run)';
             }
         }
-        statusEl.textContent = total === 0
-            ? `No results found.${stats ? ` · ${stats.elapsedMs} ms` : ''}`
-            : summary;
+        statusEl.textContent = summary;
+    }
 
-        for (const [rel, fileHits] of byFile) {
-            const slash = Math.max(rel.lastIndexOf('/'), rel.lastIndexOf('\\'));
+    function groupFor(rel) {
+        let g = groups.get(rel);
+        if (g) return g;
 
-            const header = document.createElement('div');
-            header.className = 'file-row';
-            const twistie = document.createElement('span');
-            twistie.className = 'twistie';
-            twistie.textContent = '▾';
-            const fname = document.createElement('span');
-            fname.className = 'fname';
-            fname.textContent = slash >= 0 ? rel.slice(slash + 1) : rel;
-            const fdir = document.createElement('span');
-            fdir.className = 'fdir';
-            fdir.textContent = slash >= 0 ? rel.slice(0, slash) : '';
-            const badge = document.createElement('span');
-            badge.className = 'badge';
-            badge.textContent = String(fileHits.length);
-            header.append(twistie, fname, fdir, badge);
+        const slash = Math.max(rel.lastIndexOf('/'), rel.lastIndexOf('\\'));
 
-            const matches = document.createElement('div');
-            for (const h of fileHits) {
-                const row = document.createElement('div');
-                row.className = 'match-row';
-                row.title = `${rel}:${h.line}:${h.col} (${h.kind})`;
-                const lineno = document.createElement('span');
-                lineno.className = 'lineno';
-                lineno.textContent = String(h.line);
-                const text = document.createElement('span');
-                text.className = 'text';
-                text.textContent = h.text;
-                row.append(lineno, text);
-                const openMsg = {
-                    type: 'open',
-                    file: h.file,
-                    line: h.line,
-                    col: h.col,
-                    end_line: h.end_line,
-                    end_col: h.end_col,
-                };
-                row.addEventListener('click', () => vscode.postMessage(openMsg));
-                row.addEventListener('dblclick', () =>
-                    vscode.postMessage({ ...openMsg, pin: true }),
-                );
-                matches.appendChild(row);
-            }
+        const header = document.createElement('div');
+        header.className = 'file-row';
+        const twistie = document.createElement('span');
+        twistie.className = 'twistie';
+        twistie.textContent = allCollapsed ? '▸' : '▾';
+        const fname = document.createElement('span');
+        fname.className = 'fname';
+        fname.textContent = slash >= 0 ? rel.slice(slash + 1) : rel;
+        const fdir = document.createElement('span');
+        fdir.className = 'fdir';
+        fdir.textContent = slash >= 0 ? rel.slice(0, slash) : '';
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        header.append(twistie, fname, fdir, badge);
 
-            header.addEventListener('click', () => {
-                matches.hidden = !matches.hidden;
-                twistie.textContent = matches.hidden ? '▸' : '▾';
-            });
+        const matches = document.createElement('div');
+        matches.hidden = allCollapsed;
+        header.addEventListener('click', () => {
+            matches.hidden = !matches.hidden;
+            twistie.textContent = matches.hidden ? '▸' : '▾';
+        });
 
-            fileGroups.push({ matches, twistie });
-            resultsEl.append(header, matches);
+        resultsEl.append(header, matches);
+        g = { matches, twistie, badge, count: 0 };
+        groups.set(rel, g);
+        return g;
+    }
+
+    function renderNextPage() {
+        const page = allHits.slice(renderedCount, renderedCount + pageSize);
+        for (const h of page) {
+            const g = groupFor(h.rel);
+            const row = document.createElement('div');
+            row.className = 'match-row';
+            row.title = `${h.rel}:${h.line}:${h.col} (${h.kind})`;
+            const lineno = document.createElement('span');
+            lineno.className = 'lineno';
+            lineno.textContent = String(h.line);
+            const text = document.createElement('span');
+            text.className = 'text';
+            text.textContent = h.text;
+            row.append(lineno, text);
+            const openMsg = {
+                type: 'open',
+                file: h.file,
+                line: h.line,
+                col: h.col,
+                end_line: h.end_line,
+                end_col: h.end_col,
+            };
+            row.addEventListener('click', () => vscode.postMessage(openMsg));
+            row.addEventListener('dblclick', () =>
+                vscode.postMessage({ ...openMsg, pin: true }),
+            );
+            g.matches.appendChild(row);
+            g.count++;
+            g.badge.textContent = String(g.count);
         }
+        renderedCount += page.length;
+
+        const remaining = allHits.length - renderedCount;
+        if (remaining > 0) {
+            showMoreBtn.textContent =
+                `Show ${Math.min(pageSize, remaining)} more (${remaining} remaining)`;
+            resultsEl.appendChild(showMoreBtn); // keep it as the last child
+        } else {
+            showMoreBtn.remove();
+        }
+        updateStatus();
+    }
+
+    function renderResults(hits, total, stats) {
+        resultsEl.textContent = '';
+        groups = new Map();
+        allCollapsed = false;
+        updateCollapseBtn();
+        allHits = hits;
+        renderedCount = 0;
+        lastStats = stats || null;
+        totalFiles = new Set(hits.map((h) => h.rel)).size;
+        collapseAllBtn.hidden = hits.length === 0;
+        renderNextPage();
     }
 
     // ── History rendering ─────────────────────────────────────────────────
@@ -325,6 +365,9 @@
                 if (msg.id !== undefined && msg.id !== searchId) return;
                 statusEl.textContent = msg.message;
                 resultsEl.textContent = '';
+                allHits = [];
+                renderedCount = 0;
+                groups = new Map();
                 collapseAllBtn.hidden = true;
                 break;
             case 'history':
@@ -339,6 +382,7 @@
                 break;
             case 'init': {
                 debounceMs = msg.debounceMs || 300;
+                pageSize = Math.max(1, msg.pageSize || 500);
                 renderHistory(msg.history);
                 const st = vscode.getState();
                 if (st) {
