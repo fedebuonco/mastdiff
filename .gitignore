@@ -1,3 +1,6 @@
 /target
 astdiff_output.*
 *.log
+.DS_Store
+trace.json
+/examples/ladybird/
