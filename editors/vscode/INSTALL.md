@@ -41,7 +41,15 @@ The extension is live-reloadable: edit `media/search.js`, `media/search.css`, or
 
 ## Package and publish
 
-To distribute it as a `.vsix` file (shareable, installable offline):
+To distribute it as a `.vsix` file (shareable, installable offline), use the
+bundled script — it installs devDependencies if needed, compiles, and packages:
+
+```bash
+./build-vsix.sh             # → mastdiff-search-0.2.0.vsix
+./build-vsix.sh --install   # also installs it into your local VS Code
+```
+
+Or do it manually:
 
 ```bash
 npm install -g @vscode/vsce

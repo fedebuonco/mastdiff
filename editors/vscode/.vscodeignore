@@ -3,3 +3,7 @@ tsconfig.json
 .gitignore
 node_modules/**
 **/*.map
+build-vsix.sh
+INSTALL.md
+*.vsix
+*.log
