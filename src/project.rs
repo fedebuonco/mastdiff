@@ -166,6 +166,31 @@ pub fn load_streaming(dir: &Path, tx: &std::sync::mpsc::Sender<LoadMsg>) -> Resu
 #[derive(Deserialize)]
 struct CompileEntry {
     file: String,
+    /// Build directory the entry's `file` is relative to (per the
+    /// compile_commands.json spec). Optional — absolute `file` paths
+    /// don't need it.
+    #[serde(default)]
+    directory: Option<String>,
+}
+
+/// Resolve a compile_commands `file` entry to an existing absolute path.
+/// Relative paths are tried against `directory` first (itself resolved
+/// against the project root when relative), then against the project root.
+fn resolve_entry(file: &str, directory: Option<&str>, project_root: &Path) -> Option<PathBuf> {
+    let fp = Path::new(file);
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if fp.is_absolute() {
+        candidates.push(fp.to_path_buf());
+    } else {
+        if let Some(d) = directory {
+            let dp = Path::new(d);
+            let base = if dp.is_absolute() { dp.to_path_buf() } else { project_root.join(dp) };
+            candidates.push(base.join(fp));
+        }
+        candidates.push(project_root.join(fp));
+    }
+    let found = candidates.into_iter().find(|p| p.exists())?;
+    Some(found.canonicalize().unwrap_or(found))
 }
 
 fn find_compile_commands(dir: &Path) -> Option<PathBuf> {
@@ -190,11 +215,12 @@ fn load_from_compile_commands(path: &Path, project_root: &Path) -> Result<Vec<Tr
         .into_iter()
         .filter(|e| is_source(&e.file))
         .filter_map(|e| {
-            if !Path::new(&e.file).exists() { return None; }
-            if !seen.insert(e.file.clone()) { return None; }
-            let file_size = fs::metadata(&e.file).map(|m| m.len()).unwrap_or(0);
+            let path = resolve_entry(&e.file, e.directory.as_deref(), project_root)?;
+            let path = path.to_string_lossy().into_owned();
+            if !seen.insert(path.clone()) { return None; }
+            let file_size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             Some(TranslationUnit {
-                file_path: e.file,
+                file_path: path,
                 file_size,
                 is_header: false,
             })
@@ -377,6 +403,38 @@ mod tests {
             file_size: size,
             is_header: is_header(path),
         }
+    }
+
+    // ── resolve_entry ─────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_entry_absolute_path() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let abs = root.join("examples/sample_project/src/main.cpp");
+        let got = resolve_entry(abs.to_str().unwrap(), None, root).expect("absolute path resolves");
+        assert!(got.ends_with("examples/sample_project/src/main.cpp"));
+    }
+
+    #[test]
+    fn resolve_entry_relative_to_directory() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample_project");
+        let got = resolve_entry("src/main.cpp", Some("."), &root).expect("relative path resolves");
+        assert!(got.is_absolute());
+        assert!(got.ends_with("sample_project/src/main.cpp"));
+    }
+
+    #[test]
+    fn resolve_entry_relative_without_directory_uses_root() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample_project");
+        let got = resolve_entry("src/audio.cpp", None, &root).expect("root-relative path resolves");
+        assert!(got.ends_with("sample_project/src/audio.cpp"));
+    }
+
+    #[test]
+    fn resolve_entry_missing_file_is_none() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        assert!(resolve_entry("/no/such/file.cpp", None, root).is_none());
+        assert!(resolve_entry("no/such/file.cpp", Some("."), root).is_none());
     }
 
     // ── is_cpp_source ─────────────────────────────────────────────────────

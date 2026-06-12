@@ -1,0 +1,32 @@
+[
+  {
+    "directory": ".",
+    "file": "src/main.cpp",
+    "command": "c++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o build/main.o -c src/main.cpp",
+    "output": "build/main.o"
+  },
+  {
+    "directory": ".",
+    "file": "src/entity.cpp",
+    "command": "c++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o build/entity.o -c src/entity.cpp",
+    "output": "build/entity.o"
+  },
+  {
+    "directory": ".",
+    "file": "src/physics.cpp",
+    "command": "c++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o build/physics.o -c src/physics.cpp",
+    "output": "build/physics.o"
+  },
+  {
+    "directory": ".",
+    "file": "src/renderer.cpp",
+    "command": "c++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o build/renderer.o -c src/renderer.cpp",
+    "output": "build/renderer.o"
+  },
+  {
+    "directory": ".",
+    "file": "src/audio.cpp",
+    "command": "c++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o build/audio.o -c src/audio.cpp",
+    "output": "build/audio.o"
+  }
+]

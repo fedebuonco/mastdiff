@@ -17,10 +17,13 @@
 //!
 //! Server → client (N JSON lines, then closes the connection):
 //! ```json
-//! {"type":"hit","file":"/abs/path","line":1,"col":1,"text":"void update()","kind":"identifier","capture":"match"}
-//! {"type":"done","total":42}
+//! {"type":"hit","file":"/abs/path","line":1,"col":6,"end_line":1,"end_col":12,"text":"void update()","kind":"identifier","capture":"match","hl_start":5,"hl_end":11}
+//! {"type":"done","total":42,"ms":86,"cache_hits":40,"files":42}
 //! ```
 //! On failure the server sends `{"type":"error","message":"..."}` instead of `done`.
+//!
+//! Cancellation: the client closes its socket; the daemon detects the EOF
+//! on a background read and stops the in-flight search.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -446,4 +449,58 @@ pub fn try_client_search(root: &Path, req: &DaemonRequest) -> Option<Vec<DaemonH
         }
     }
     Some(hits)
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::highlight_span;
+
+    #[test]
+    fn span_on_unindented_line() {
+        let line = "void paint(int x);";
+        let text = line.trim().to_string();
+        // match on "paint": byte cols 5..10
+        assert_eq!(highlight_span(line, &text, 5, 10, true), (5, 10));
+        assert_eq!(&text[5..10], "paint");
+    }
+
+    #[test]
+    fn span_shifts_for_leading_indentation() {
+        let line = "        obj.paint();";
+        let text = line.trim().to_string();
+        // "paint" starts at byte 12 in the raw line, 4 in the trimmed text
+        let (s, e) = highlight_span(line, &text, 12, 17, true);
+        assert_eq!(&text[s as usize..e as usize], "paint");
+    }
+
+    #[test]
+    fn multiline_match_extends_to_end_of_snippet() {
+        let line = "    auto f = [&](int a,";
+        let text = line.trim().to_string();
+        let (s, e) = highlight_span(line, &text, 9, 3, false);
+        assert_eq!(s, 5); // "f = ..." region start
+        assert_eq!(e as usize, text.len());
+    }
+
+    #[test]
+    fn out_of_range_columns_are_clamped() {
+        let line = "int x;";
+        let text = line.trim().to_string();
+        let (s, e) = highlight_span(line, &text, 100, 200, true);
+        assert_eq!(s as usize, text.len());
+        assert_eq!(e as usize, text.len());
+    }
+
+    #[test]
+    fn span_clamps_to_char_boundaries() {
+        let line = "int café_count;"; // é is 2 bytes (offsets 7-8)
+        let text = line.trim().to_string();
+        // end col lands mid-é — must back off to a char boundary, not panic
+        let (s, e) = highlight_span(line, &text, 4, 8, true);
+        assert!(text.is_char_boundary(s as usize));
+        assert!(text.is_char_boundary(e as usize));
+        let _ = &text[s as usize..e as usize]; // must not panic
+    }
 }
