@@ -30,9 +30,11 @@ jobs:
             binary: mastdiff
             artifact: mastdiff-macos-aarch64
 
-          # ── macOS Intel ───────────────────────────────────────────────────
+          # ── macOS Intel — cross-compiled from the arm64 runner, since the
+          # macos-13 Intel runners are retired and jobs targeting them queue
+          # forever (both past releases hung 24 h on this and never published)
           - name: macos-x86_64
-            os: macos-13
+            os: macos-latest
             target: x86_64-apple-darwin
             binary: mastdiff
             artifact: mastdiff-macos-x86_64
