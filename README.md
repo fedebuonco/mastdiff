@@ -55,10 +55,19 @@ mastdiff --search "fn:" --include "src/**" --exclude "tests/**" .
 ```
 
 Flags: `--json`, `--include <globs>`, `--exclude <globs>`, `--regex`, `--case-sensitive`.
+JSON hits carry the full match range (`line`/`col`/`end_line`/`end_col`) plus `hl_start`/`hl_end` — the match's byte span within the snippet text — so tools can highlight the exact match.
+
+### Search daemon
+
+`mastdiff --daemon <root>` runs a persistent search server that keeps the AST cache warm between queries, so repeat searches skip re-parsing unchanged files (~6× faster on large trees). It listens on a localhost TCP port, streams hits as JSON lines as they're found, cancels the search when the client disconnects, and exits after 5 minutes idle. `--search` automatically delegates to a running daemon for the same root; the VS Code extension spawns and manages one for you.
 
 ### VS Code extension
 
-[`editors/vscode/`](editors/vscode/) ships **mastdiff: Semantic C++ Search** — the structural search as a sidebar view styled after VS Code's built-in Search. Press `Ctrl+Alt+F` (`Cmd+Alt+F` on macOS): a query box with `Aa`/`.*` toggles, colored filter chips for every semantic prefix (`fn:`, `call:`, `class:`, …), results grouped by file underneath, include/exclude globs, and a History tab of previous searches. Context-menu actions search for calls to / definitions of the symbol under the cursor. The extension is a thin client over the headless CLI; see its [README](editors/vscode/README.md) for setup.
+[`editors/vscode/`](editors/vscode/) ships **mastdiff: Semantic C++ Search** — the structural search as a sidebar view styled after VS Code's built-in Search. Press `Ctrl+Alt+F` (`Cmd+Alt+F` on macOS): a query box with `Aa`/`.*` toggles, colored filter chips for every semantic prefix (`fn:`, `call:`, `class:`, …), include/exclude globs, and a History tab of previous searches.
+
+Results stream in live as the search runs, grouped by file with the matched text highlighted in each row, and render a page at a time with a *Show more* button so even huge result sets stay smooth. Navigate without leaving the query box: `↑`/`↓` move the selection, `Enter` opens the match (flash-highlighted in the editor), `Ctrl/Cmd+Enter` pins the tab. The search box stays fixed while results scroll, and the status line reports timing and AST-cache stats. Context-menu actions search for calls to / definitions of the symbol under the cursor.
+
+The extension manages a search daemon per workspace for warm-cache speed and falls back to one-shot CLI searches when the daemon is unavailable; see its [README](editors/vscode/README.md) for setup.
 
 ---
 
