@@ -27,6 +27,9 @@ interface Hit {
     text: string;
     kind: string;
     capture: string;
+    /** byte range of the match within `text`, for in-row highlighting */
+    hl_start?: number;
+    hl_end?: number;
 }
 
 /** How a finished search was served — drives the status-line stats. */
@@ -186,12 +189,27 @@ async function ensureDaemon(root: string): Promise<number | undefined> {
 // ── TCP search ────────────────────────────────────────────────────────────
 
 interface DaemonResult {
-    hits: Hit[];
+    total: number;
     cacheHits: number;
     filesSearched: number;
 }
 
-function runSearchDaemon(port: number, req: SearchRequest): Promise<DaemonResult> {
+// Closing this socket tells the daemon to cancel the in-flight search, so
+// each new search aborts the previous one instead of letting it run out.
+let activeSearchSock: net.Socket | undefined;
+
+function cancelActiveSearch(): void {
+    if (activeSearchSock) {
+        activeSearchSock.destroy();
+        activeSearchSock = undefined;
+    }
+}
+
+function runSearchDaemon(
+    port: number,
+    req: SearchRequest,
+    onBatch: (hits: Hit[]) => void,
+): Promise<DaemonResult> {
     return new Promise((resolve, reject) => {
         const payload = JSON.stringify({
             query: req.query,
@@ -201,18 +219,20 @@ function runSearchDaemon(port: number, req: SearchRequest): Promise<DaemonResult
             case_sensitive: req.caseSensitive,
         }) + '\n';
 
-        const hits: Hit[] = [];
+        let total = 0;
         let cacheHits = 0;
         let filesSearched = 0;
         let settled = false;
         const sock = net.connect(port, '127.0.0.1');
+        activeSearchSock = sock;
         sock.setTimeout(120_000);
 
         function done(err?: Error): void {
             if (settled) { return; }
             settled = true;
+            if (activeSearchSock === sock) { activeSearchSock = undefined; }
             sock.destroy();
-            if (err) { reject(err); } else { resolve({ hits, cacheHits, filesSearched }); }
+            if (err) { reject(err); } else { resolve({ total, cacheHits, filesSearched }); }
         }
 
         sock.on('connect', () => sock.write(payload));
@@ -220,6 +240,7 @@ function runSearchDaemon(port: number, req: SearchRequest): Promise<DaemonResult
         let buf = '';
         sock.on('data', (chunk: Buffer) => {
             buf += chunk.toString('utf8');
+            const batch: Hit[] = [];
             let nl: number;
             while ((nl = buf.indexOf('\n')) !== -1) {
                 const line = buf.slice(0, nl).trim();
@@ -228,7 +249,7 @@ function runSearchDaemon(port: number, req: SearchRequest): Promise<DaemonResult
                 try {
                     const msg = JSON.parse(line) as { type: string; [k: string]: unknown };
                     if (msg.type === 'hit') {
-                        hits.push({
+                        batch.push({
                             file: msg.file as string,
                             line: msg.line as number,
                             col: msg.col as number,
@@ -237,15 +258,22 @@ function runSearchDaemon(port: number, req: SearchRequest): Promise<DaemonResult
                             text: msg.text as string,
                             kind: msg.kind as string,
                             capture: msg.capture as string,
+                            hl_start: msg.hl_start as number,
+                            hl_end: msg.hl_end as number,
                         });
                     } else if (msg.type === 'done') {
                         cacheHits = (msg.cache_hits as number) ?? 0;
                         filesSearched = (msg.files as number) ?? 0;
+                        if (batch.length) { total += batch.length; onBatch(batch.splice(0)); }
                         done();
                     } else if (msg.type === 'error') {
                         done(new Error(msg.message as string));
                     }
                 } catch { /* ignore malformed lines */ }
+            }
+            if (batch.length && !settled) {
+                total += batch.length;
+                onBatch(batch);
             }
         });
 
@@ -259,7 +287,11 @@ function runSearchDaemon(port: number, req: SearchRequest): Promise<DaemonResult
 
 let activeProc: cp.ChildProcess | undefined;
 
-function runSearchSubprocess(req: SearchRequest, root: string): Promise<Hit[]> {
+function runSearchSubprocess(
+    req: SearchRequest,
+    root: string,
+    onBatch: (hits: Hit[]) => void,
+): Promise<number> {
     if (activeProc) {
         activeProc.kill();
         activeProc = undefined;
@@ -276,22 +308,40 @@ function runSearchSubprocess(req: SearchRequest, root: string): Promise<Hit[]> {
         const proc = cp.spawn(bin, args, { cwd: root });
         activeProc = proc;
 
-        const hits: Hit[] = [];
+        let total = 0;
+        let batch: Hit[] = [];
+        let flushTimer: NodeJS.Timeout | undefined;
+        const flush = () => {
+            if (flushTimer) { clearTimeout(flushTimer); flushTimer = undefined; }
+            if (batch.length) {
+                total += batch.length;
+                onBatch(batch);
+                batch = [];
+            }
+        };
+
         let stderr = '';
         const rl = readline.createInterface({ input: proc.stdout });
         rl.on('line', (line) => {
-            try { hits.push(JSON.parse(line) as Hit); } catch { /* ignore */ }
+            try { batch.push(JSON.parse(line) as Hit); } catch { return; }
+            if (batch.length >= 256) {
+                flush();
+            } else if (!flushTimer) {
+                flushTimer = setTimeout(flush, 50);
+            }
         });
         proc.stderr.on('data', (chunk) => (stderr += chunk));
         proc.on('error', (err) => reject(err));
         proc.on('close', (code, signal) => {
             if (activeProc === proc) { activeProc = undefined; }
             if (signal) {
-                resolve([]);
+                flush();
+                resolve(total);
             } else if (code !== 0) {
                 reject(new Error(stderr.trim() || `mastdiff exited with code ${code}`));
             } else {
-                resolve(hits);
+                flush();
+                resolve(total);
             }
         });
     });
@@ -432,18 +482,33 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
         }
 
         const mine = ++this.generation;
+        cancelActiveSearch(); // abort the previous search in the daemon
+
+        // Stream hits to the webview as they arrive; drop batches from
+        // searches that have been superseded.
+        const onBatch = (hits: Hit[]): void => {
+            if (mine !== this.generation) { return; }
+            const shown: WebviewHit[] = hits.map((h) => {
+                const abs = path.isAbsolute(h.file) ? h.file : path.join(root, h.file);
+                return { ...h, file: abs, rel: path.relative(root, abs) };
+            });
+            this.post({ type: 'batch', id: req.id, hits: shown });
+        };
+
+        this.post({ type: 'begin', id: req.id });
 
         try {
             const t0 = Date.now();
-            let hits: Hit[];
+            let total: number;
             let stats: SearchStats;
 
             // Try daemon first; fall back to subprocess on any failure.
             const port = await ensureDaemon(root);
+            if (mine !== this.generation) { return; }
             if (port !== undefined) {
                 try {
-                    const res = await runSearchDaemon(port, req);
-                    hits = res.hits;
+                    const res = await runSearchDaemon(port, req, onBatch);
+                    total = res.total;
                     stats = {
                         elapsedMs: Date.now() - t0,
                         engine: 'daemon',
@@ -453,22 +518,20 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
                 } catch (daemonErr) {
                     // Daemon died or returned an error — clear port and fall back.
                     daemonPort = undefined;
-                    hits = await runSearchSubprocess(req, root);
+                    if (mine !== this.generation) { return; }
+                    this.post({ type: 'begin', id: req.id }); // drop partial daemon results
+                    total = await runSearchSubprocess(req, root, onBatch);
                     stats = { elapsedMs: Date.now() - t0, engine: 'subprocess' };
                 }
             } else {
-                hits = await runSearchSubprocess(req, root);
+                total = await runSearchSubprocess(req, root, onBatch);
                 stats = { elapsedMs: Date.now() - t0, engine: 'subprocess' };
             }
 
             if (mine !== this.generation) { return; }
 
-            const shown: WebviewHit[] = hits.map((h) => {
-                const abs = path.isAbsolute(h.file) ? h.file : path.join(root, h.file);
-                return { ...h, file: abs, rel: path.relative(root, abs) };
-            });
-            this.post({ type: 'results', id: req.id, hits: shown, total: hits.length, stats });
-            this.addHistory(req, hits.length);
+            this.post({ type: 'done', id: req.id, total, stats });
+            this.addHistory(req, total);
             this.post({ type: 'history', items: this.history() });
         } catch (err) {
             if (mine !== this.generation) { return; }
@@ -574,6 +637,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
+    cancelActiveSearch();
     if (activeProc) {
         activeProc.kill();
         activeProc = undefined;

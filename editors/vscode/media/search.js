@@ -93,9 +93,9 @@
         const query = queryEl.value.trim();
         searchId++;
         if (!query) {
-            resultsEl.textContent = '';
+            resetResults();
+            searching = false;
             statusEl.textContent = '';
-            collapseAllBtn.hidden = true;
             return;
         }
         statusEl.textContent = 'Searching…';
@@ -121,6 +121,9 @@
     });
     queryEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
+            // With a result row selected (↑/↓), Enter opens it instead of
+            // re-running the search — see the navigation handler below.
+            if (selIdx >= 0) { return; }
             clearTimeout(debounceTimer);
             fire();
         }
@@ -168,30 +171,43 @@
     });
 
     // ── Results rendering (grouped by file, like the built-in Search) ────
-    // The full hit list stays in memory; only `pageSize` rows are added to
-    // the DOM per page, with a "Show more" button to append the next page.
-    // A file's hits may span page boundaries, so groups are kept in a map
-    // and late pages merge into the existing group.
+    // Hits stream in as `batch` messages and accumulate in `allHits`; only
+    // `pageSize` rows are added to the DOM per page, with a "Show more"
+    // button to append the next page. A file's hits may span batch and page
+    // boundaries, so groups are kept in a map and merged into.
     let pageSize = 500;
     let allHits = [];
     let renderedCount = 0;
-    let totalFiles = 0;
+    let pagesShown = 1;
+    let relSet = new Set();
+    let searching = false;
     let lastStats = null;
     let groups = new Map(); // rel → {matches, twistie, badge, count}
+    let navRows = []; // flat list of match rows, in render order
+    let selIdx = -1;
     const showMoreBtn = document.createElement('button');
     showMoreBtn.className = 'show-more';
-    showMoreBtn.addEventListener('click', renderNextPage);
+    showMoreBtn.addEventListener('click', () => {
+        pagesShown++;
+        renderUpToLimit();
+    });
 
     const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
     function updateStatus() {
         const total = allHits.length;
+        if (searching) {
+            statusEl.textContent = total === 0
+                ? 'Searching…'
+                : `Searching… ${plural(total, 'result')} so far`;
+            return;
+        }
         if (total === 0) {
             statusEl.textContent =
                 `No results found.${lastStats ? ` · ${lastStats.elapsedMs} ms` : ''}`;
             return;
         }
-        let summary = `${plural(total, 'result')} in ${plural(totalFiles, 'file')}`;
+        let summary = `${plural(total, 'result')} in ${plural(relSet.size, 'file')}`;
         if (renderedCount < total) {
             summary += ` — showing first ${renderedCount}`;
         }
@@ -243,9 +259,27 @@
         return g;
     }
 
-    function renderNextPage() {
-        const page = allHits.slice(renderedCount, renderedCount + pageSize);
-        for (const h of page) {
+    // Fill the .text span with the snippet, wrapping the matched range
+    // (byte offsets from the search engine; fine for the ASCII-dominated
+    // C++ this searches) in a highlight span.
+    function fillSnippet(textEl, h) {
+        const s = h.hl_start, e = h.hl_end;
+        if (typeof s === 'number' && typeof e === 'number' && s >= 0 && s < e && e <= h.text.length) {
+            textEl.append(h.text.slice(0, s));
+            const hl = document.createElement('span');
+            hl.className = 'hl';
+            hl.textContent = h.text.slice(s, e);
+            textEl.append(hl, h.text.slice(e));
+        } else {
+            textEl.textContent = h.text;
+        }
+    }
+
+    // Render any not-yet-rendered hits, up to the current page limit.
+    function renderUpToLimit() {
+        const limit = Math.min(allHits.length, pagesShown * pageSize);
+        for (let i = renderedCount; i < limit; i++) {
+            const h = allHits[i];
             const g = groupFor(h.rel);
             const row = document.createElement('div');
             row.className = 'match-row';
@@ -255,7 +289,7 @@
             lineno.textContent = String(h.line);
             const text = document.createElement('span');
             text.className = 'text';
-            text.textContent = h.text;
+            fillSnippet(text, h);
             row.append(lineno, text);
             const openMsg = {
                 type: 'open',
@@ -265,15 +299,20 @@
                 end_line: h.end_line,
                 end_col: h.end_col,
             };
-            row.addEventListener('click', () => vscode.postMessage(openMsg));
+            row.addEventListener('click', () => {
+                selectRow(navRows.indexOf(row), false);
+                vscode.postMessage(openMsg);
+            });
             row.addEventListener('dblclick', () =>
                 vscode.postMessage({ ...openMsg, pin: true }),
             );
+            row._openMsg = openMsg;
+            navRows.push(row);
             g.matches.appendChild(row);
             g.count++;
             g.badge.textContent = String(g.count);
         }
-        renderedCount += page.length;
+        renderedCount = limit;
 
         const remaining = allHits.length - renderedCount;
         if (remaining > 0) {
@@ -283,21 +322,96 @@
         } else {
             showMoreBtn.remove();
         }
+        collapseAllBtn.hidden = renderedCount === 0;
         updateStatus();
     }
 
-    function renderResults(hits, total, stats) {
+    function resetResults() {
         resultsEl.textContent = '';
         groups = new Map();
+        navRows = [];
+        selIdx = -1;
         allCollapsed = false;
         updateCollapseBtn();
-        allHits = hits;
+        allHits = [];
+        relSet = new Set();
         renderedCount = 0;
-        lastStats = stats || null;
-        totalFiles = new Set(hits.map((h) => h.rel)).size;
-        collapseAllBtn.hidden = hits.length === 0;
-        renderNextPage();
+        pagesShown = 1;
+        lastStats = null;
+        collapseAllBtn.hidden = true;
     }
+
+    function appendHits(hits) {
+        for (const h of hits) {
+            allHits.push(h);
+            relSet.add(h.rel);
+        }
+        renderUpToLimit();
+    }
+
+    // ── Keyboard navigation (↑/↓ move, Enter opens, Esc back to input) ───
+    function selectRow(idx, reveal) {
+        if (idx < 0 || idx >= navRows.length) { return; }
+        if (selIdx >= 0 && navRows[selIdx]) {
+            navRows[selIdx].classList.remove('selected');
+        }
+        selIdx = idx;
+        const row = navRows[selIdx];
+        row.classList.add('selected');
+        if (reveal) {
+            row.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    // Step over rows hidden inside collapsed file groups. Arrowing past the
+    // bottom loads the next page first.
+    function moveSelection(delta) {
+        let i = selIdx;
+        do {
+            i += delta;
+        } while (i >= 0 && i < navRows.length && navRows[i].parentElement.hidden);
+        if (i >= 0 && i < navRows.length) {
+            selectRow(i, true);
+        } else if (delta > 0 && allHits.length > renderedCount) {
+            pagesShown++;
+            renderUpToLimit();
+            moveSelection(delta);
+        } else if (delta < 0) {
+            // Moved above the first row — deselect, back to plain typing.
+            if (selIdx >= 0 && navRows[selIdx]) {
+                navRows[selIdx].classList.remove('selected');
+            }
+            selIdx = -1;
+        }
+    }
+
+    function clearSelection() {
+        if (selIdx >= 0 && navRows[selIdx]) {
+            navRows[selIdx].classList.remove('selected');
+        }
+        selIdx = -1;
+    }
+
+    // Navigation happens from the query input (QuickPick-style): ↑/↓ move
+    // the selection, Enter opens it (Ctrl/Cmd+Enter pins), Esc deselects.
+    // Enter with no selection re-runs the search (handled by the existing
+    // Enter handler above).
+    queryEl.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            moveSelection(1);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (selIdx >= 0) { moveSelection(-1); }
+        } else if (e.key === 'Enter' && selIdx >= 0) {
+            e.preventDefault();
+            const row = navRows[selIdx];
+            vscode.postMessage(e.ctrlKey || e.metaKey ? { ...row._openMsg, pin: true } : row._openMsg);
+        } else if (e.key === 'Escape' && selIdx >= 0) {
+            e.preventDefault();
+            clearSelection();
+        }
+    });
 
     // ── History rendering ─────────────────────────────────────────────────
     function timeAgo(ts) {
@@ -357,18 +471,27 @@
     window.addEventListener('message', (e) => {
         const msg = e.data;
         switch (msg.type) {
-            case 'results':
+            case 'begin':
                 if (msg.id !== searchId) return; // stale
-                renderResults(msg.hits, msg.total, msg.stats);
+                resetResults();
+                searching = true;
+                updateStatus();
+                break;
+            case 'batch':
+                if (msg.id !== searchId) return; // stale
+                appendHits(msg.hits);
+                break;
+            case 'done':
+                if (msg.id !== searchId) return; // stale
+                searching = false;
+                lastStats = msg.stats || null;
+                updateStatus();
                 break;
             case 'error':
                 if (msg.id !== undefined && msg.id !== searchId) return;
+                searching = false;
+                resetResults();
                 statusEl.textContent = msg.message;
-                resultsEl.textContent = '';
-                allHits = [];
-                renderedCount = 0;
-                groups = new Map();
-                collapseAllBtn.hidden = true;
                 break;
             case 'history':
                 renderHistory(msg.items);

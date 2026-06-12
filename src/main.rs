@@ -96,6 +96,8 @@ fn headless_search(root: &str, raw_query: &str, cli: &Cli) -> Result<()> {
                         "text": h.text,
                         "kind": h.kind,
                         "capture": h.capture,
+                        "hl_start": h.hl_start,
+                        "hl_end": h.hl_end,
                     });
                     writeln!(out, "{obj}")?;
                 } else {
@@ -143,10 +145,14 @@ fn headless_search(root: &str, raw_query: &str, cli: &Cli) -> Result<()> {
                 .map(|src| src.lines().map(str::to_string).collect())
                 .unwrap_or_default()
         });
-        let full_line = lines
-            .get(r.line)
-            .map(|l| l.trim().to_string())
-            .unwrap_or_else(|| r.snippet.clone());
+        let (full_line, hl_start, hl_end) = match lines.get(r.line) {
+            Some(l) => {
+                let text = l.trim().to_string();
+                let (s, e) = daemon::highlight_span(l, &text, r.col, r.end_col, r.end_line == r.line);
+                (text, s, e)
+            }
+            None => (r.snippet.clone(), 0, 0),
+        };
         if cli.json {
             let obj = serde_json::json!({
                 "file": r.file_path,
@@ -157,6 +163,8 @@ fn headless_search(root: &str, raw_query: &str, cli: &Cli) -> Result<()> {
                 "text": full_line,
                 "kind": r.node_kind,
                 "capture": r.capture_name,
+                "hl_start": hl_start,
+                "hl_end": hl_end,
             });
             writeln!(out, "{obj}")?;
         } else {

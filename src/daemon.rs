@@ -95,6 +95,12 @@ enum DaemonMsg {
         text: String,
         kind: String,
         capture: String,
+        /// Byte range of the match within `text` (trimmed line), for
+        /// in-row highlighting. `hl_start == hl_end` means no usable span.
+        #[serde(default)]
+        hl_start: u32,
+        #[serde(default)]
+        hl_end: u32,
     },
     Done {
         total: usize,
@@ -122,6 +128,28 @@ pub struct DaemonHit {
     pub text: String,
     pub kind: String,
     pub capture: String,
+    pub hl_start: u32,
+    pub hl_end: u32,
+}
+
+/// Byte range of a match within the trimmed snippet line, clamped to char
+/// boundaries so the range is always safe to slice with.
+///
+/// `col`/`end_col` are 0-based byte columns in the original (untrimmed)
+/// line; `same_line` is false when the match continues past this line, in
+/// which case the highlight extends to the end of the snippet.
+pub fn highlight_span(line: &str, text: &str, col: usize, end_col: usize, same_line: bool) -> (u32, u32) {
+    let lead = line.len() - line.trim_start().len();
+    let clamp = |b: usize| -> usize {
+        let mut b = b.min(text.len());
+        while b > 0 && !text.is_char_boundary(b) {
+            b -= 1;
+        }
+        b
+    };
+    let start = clamp(col.saturating_sub(lead));
+    let end = if same_line { clamp(end_col.saturating_sub(lead)).max(start) } else { text.len() };
+    (start as u32, end as u32)
 }
 
 // ── Daemon server ─────────────────────────────────────────────────────────
@@ -293,10 +321,39 @@ fn handle_conn(stream: TcpStream, state: Arc<Mutex<DaemonState>>) -> Result<()> 
     let files_count = files.len();
     let started = Instant::now();
     let cancel = Arc::new(AtomicBool::new(false));
+
+    // Cancellation: the client signals "stop" by closing its socket.  Keep
+    // reading the connection in the background — EOF or error means the
+    // client is gone, so flip the cancel flag and let the workers wind down.
+    {
+        let cancel = Arc::clone(&cancel);
+        std::thread::spawn(move || {
+            let mut buf = String::new();
+            loop {
+                buf.clear();
+                match reader.read_line(&mut buf) {
+                    Ok(0) => {
+                        cancel.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                    Ok(_) => {} // ignore any further lines
+                    // The socket has a read timeout — that just means the
+                    // client is quiet, not gone.
+                    Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                    Err(_) => {
+                        cancel.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    let search_cancel = Arc::clone(&cancel);
     let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<search::SearchResult>>(256);
     let (stats_tx, stats_rx) = std::sync::mpsc::channel::<usize>();
     std::thread::spawn(move || {
-        let cache_hits = search::search_project_streaming(&files, &query, tx, cancel, ast_cache);
+        let cache_hits = search::search_project_streaming(&files, &query, tx, search_cancel, ast_cache);
         let _ = stats_tx.send(cache_hits);
     });
 
@@ -312,10 +369,14 @@ fn handle_conn(stream: TcpStream, state: Arc<Mutex<DaemonState>>) -> Result<()> 
                     .map(|s| s.lines().map(str::to_string).collect())
                     .unwrap_or_default()
             });
-            let text = lines
-                .get(r.line)
-                .map(|l| l.trim().to_string())
-                .unwrap_or_else(|| r.snippet.clone());
+            let (text, hl_start, hl_end) = match lines.get(r.line) {
+                Some(l) => {
+                    let text = l.trim().to_string();
+                    let (s, e) = highlight_span(l, &text, r.col, r.end_col, r.end_line == r.line);
+                    (text, s, e)
+                }
+                None => (r.snippet.clone(), 0, 0),
+            };
             let msg = serde_json::to_string(&DaemonMsg::Hit {
                 file: r.file_path,
                 line: (r.line + 1) as u32,
@@ -325,9 +386,12 @@ fn handle_conn(stream: TcpStream, state: Arc<Mutex<DaemonState>>) -> Result<()> 
                 text,
                 kind: r.node_kind,
                 capture: r.capture_name,
+                hl_start,
+                hl_end,
             })?;
             if writeln!(writer, "{msg}").is_err() {
                 write_ok = false;
+                cancel.store(true, Ordering::Relaxed);
                 break 'recv;
             }
         }
@@ -371,8 +435,8 @@ pub fn try_client_search(root: &Path, req: &DaemonRequest) -> Option<Vec<DaemonH
     for line in BufReader::new(&stream).lines() {
         let line = line.ok()?;
         match serde_json::from_str::<DaemonMsg>(&line).ok()? {
-            DaemonMsg::Hit { file, line: ln, col, end_line, end_col, text, kind, capture } => {
-                hits.push(DaemonHit { file, line: ln, col, end_line, end_col, text, kind, capture });
+            DaemonMsg::Hit { file, line: ln, col, end_line, end_col, text, kind, capture, hl_start, hl_end } => {
+                hits.push(DaemonHit { file, line: ln, col, end_line, end_col, text, kind, capture, hl_start, hl_end });
             }
             DaemonMsg::Done { .. } => break,
             DaemonMsg::Error { message } => {

@@ -309,6 +309,16 @@ body {
     background: var(--vscode-list-hoverBackground);
 }
 
+.match-row.selected {
+    background: var(--vscode-list-activeSelectionBackground);
+    color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+}
+
+.match-row .hl {
+    background: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+    border-radius: 2px;
+}
+
 .match-row .lineno {
     flex: none;
     min-width: 2.5em;

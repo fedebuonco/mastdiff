@@ -2,7 +2,7 @@
   "name": "mastdiff-search",
   "displayName": "mastdiff: Semantic C++ Search",
   "description": "Structural, tree-sitter-powered C++ search inside VS Code — find function definitions, call sites, classes, fields and more with simple fn:/call:/class: queries or raw tree-sitter S-expressions.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "fedebuonco",
   "repository": {
     "type": "git",
