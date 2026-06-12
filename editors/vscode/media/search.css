@@ -1,0 +1,305 @@
+body {
+    padding: 0 8px;
+    margin: 0;
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────────────── */
+
+.tabs {
+    display: flex;
+    gap: 2px;
+    margin: 6px 0 8px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+.tab {
+    appearance: none;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--vscode-panelTitle-inactiveForeground, var(--vscode-descriptionForeground));
+    cursor: pointer;
+    font-family: inherit;
+    font-size: inherit;
+    padding: 4px 10px 5px;
+}
+
+.tab.active {
+    color: var(--vscode-panelTitle-activeForeground, var(--vscode-foreground));
+    border-bottom-color: var(--vscode-panelTitle-activeBorder, var(--vscode-focusBorder));
+}
+
+/* ── Search input (mimics the built-in search box) ────────────────────── */
+
+.input-box {
+    display: flex;
+    align-items: center;
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 2px;
+}
+
+.input-box:focus-within {
+    border-color: var(--vscode-focusBorder);
+}
+
+.input-box input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--vscode-input-foreground);
+    font-family: inherit;
+    font-size: inherit;
+    padding: 4px 6px;
+}
+
+.input-box input::placeholder {
+    color: var(--vscode-input-placeholderForeground);
+}
+
+.input-actions {
+    display: flex;
+    gap: 2px;
+    padding-right: 3px;
+}
+
+.input-actions button {
+    appearance: none;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 1px 4px;
+}
+
+.input-actions button:hover {
+    background: var(--vscode-inputOption-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+
+.input-actions button.on {
+    background: var(--vscode-inputOption-activeBackground, rgba(0, 122, 204, 0.4));
+    border-color: var(--vscode-inputOption-activeBorder, transparent);
+    color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+}
+
+/* ── Filter chips (colored blocks) ────────────────────────────────────── */
+
+#chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 8px 0 4px;
+}
+
+.chip {
+    --chip-color: var(--vscode-foreground);
+    appearance: none;
+    cursor: pointer;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    line-height: 16px;
+    padding: 0 7px;
+    border-radius: 9px;
+    color: var(--chip-color);
+    background: color-mix(in srgb, var(--chip-color) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--chip-color) 45%, transparent);
+}
+
+.chip:hover {
+    background: color-mix(in srgb, var(--chip-color) 28%, transparent);
+}
+
+.chip.active {
+    background: var(--chip-color);
+    color: var(--vscode-editor-background, #1e1e1e);
+    border-color: var(--chip-color);
+}
+
+/* ── Include / exclude globs ──────────────────────────────────────────── */
+
+#globs {
+    margin: 4px 0;
+}
+
+#globs summary {
+    cursor: pointer;
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+    user-select: none;
+}
+
+#globs input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 4px;
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 2px;
+    color: var(--vscode-input-foreground);
+    font-family: inherit;
+    font-size: inherit;
+    outline: none;
+    padding: 3px 6px;
+}
+
+#globs input:focus {
+    border-color: var(--vscode-focusBorder);
+}
+
+/* ── Status + results ─────────────────────────────────────────────────── */
+
+#status {
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+    margin: 6px 0;
+    min-height: 14px;
+}
+
+#results {
+    margin: 0 -8px;
+}
+
+.file-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    padding: 2px 8px;
+    user-select: none;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.file-row:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.twistie {
+    width: 12px;
+    flex: none;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    font-size: 10px;
+}
+
+.fname {
+    flex: none;
+}
+
+.fdir {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.9em;
+}
+
+.badge {
+    flex: none;
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    border-radius: 9px;
+    font-size: 10px;
+    line-height: 14px;
+    padding: 0 6px;
+}
+
+.match-row {
+    display: flex;
+    gap: 6px;
+    cursor: pointer;
+    padding: 1px 8px 1px 24px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.match-row:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.match-row .lineno {
+    flex: none;
+    min-width: 2.5em;
+    text-align: right;
+    color: var(--vscode-editorLineNumber-foreground, var(--vscode-descriptionForeground));
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 0.9em;
+}
+
+.match-row .text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 0.95em;
+}
+
+/* ── History tab ──────────────────────────────────────────────────────── */
+
+.history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+    margin: 4px 0 6px;
+}
+
+.history-header button {
+    appearance: none;
+    background: none;
+    border: 1px solid var(--vscode-button-border, transparent);
+    border-radius: 2px;
+    color: var(--vscode-textLink-foreground);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 1px 6px;
+}
+
+.history-header button:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+#history-list {
+    list-style: none;
+    margin: 0 -8px;
+    padding: 0;
+}
+
+.hist-row {
+    cursor: pointer;
+    padding: 3px 8px;
+    overflow: hidden;
+}
+
+.hist-row:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.hist-row .hquery {
+    display: block;
+    font-family: var(--vscode-editor-font-family, monospace);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hist-row .hmeta {
+    display: block;
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+}
+
+.hist-empty {
+    color: var(--vscode-descriptionForeground);
+    padding: 4px 8px;
+}

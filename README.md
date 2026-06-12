@@ -44,6 +44,22 @@ Live search with a 300 ms debounce; results stream in as you type. Press `Enter`
 
 Results show filename, line, capture name, and a source snippet. Tab through the include / exclude boxes to filter by glob (`src/**`, `*.cpp`). Navigate with `↑`/`↓`; `Ctrl+o` opens the exact line in your editor.
 
+### Headless search (CLI)
+
+The same search engine is scriptable — `--search` prints results and exits, no TUI:
+
+```bash
+mastdiff --search "fn:update" ./my_project/            # file:line:col: text
+mastdiff --search "call:render" --json ./my_project/   # JSON Lines, for tooling
+mastdiff --search "fn:" --include "src/**" --exclude "tests/**" .
+```
+
+Flags: `--json`, `--include <globs>`, `--exclude <globs>`, `--regex`, `--case-sensitive`.
+
+### VS Code extension
+
+[`editors/vscode/`](editors/vscode/) ships **mastdiff: Semantic C++ Search** — the structural search as a sidebar view styled after VS Code's built-in Search. Press `Ctrl+Alt+F` (`Cmd+Alt+F` on macOS): a query box with `Aa`/`.*` toggles, colored filter chips for every semantic prefix (`fn:`, `call:`, `class:`, …), results grouped by file underneath, include/exclude globs, and a History tab of previous searches. Context-menu actions search for calls to / definitions of the symbol under the cursor. The extension is a thin client over the headless CLI; see its [README](editors/vscode/README.md) for setup.
+
 ---
 
 ## Installation
