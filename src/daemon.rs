@@ -90,12 +90,23 @@ enum DaemonMsg {
         file: String,
         line: u32,
         col: u32,
+        end_line: u32,
+        end_col: u32,
         text: String,
         kind: String,
         capture: String,
     },
     Done {
         total: usize,
+        /// Search wall time in milliseconds.
+        #[serde(default)]
+        ms: u64,
+        /// Files whose parse tree came from the warm AST cache.
+        #[serde(default)]
+        cache_hits: usize,
+        /// Total files searched (after include/exclude filtering).
+        #[serde(default)]
+        files: usize,
     },
     Error {
         message: String,
@@ -106,6 +117,8 @@ pub struct DaemonHit {
     pub file: String,
     pub line: u32,
     pub col: u32,
+    pub end_line: u32,
+    pub end_col: u32,
     pub text: String,
     pub kind: String,
     pub capture: String,
@@ -196,7 +209,7 @@ pub fn run_daemon(root: &Path, cfg: &Config) -> Result<()> {
             let cancel = Arc::new(AtomicBool::new(false));
             let (tx, rx) = std::sync::mpsc::sync_channel(512);
             std::thread::spawn(move || {
-                search::search_project_streaming(&files, &query, tx, cancel, ast_cache);
+                let _ = search::search_project_streaming(&files, &query, tx, cancel, ast_cache);
             });
             let mut n = 0usize;
             while let Ok(batch) = rx.recv() {
@@ -277,10 +290,14 @@ fn handle_conn(stream: TcpStream, state: Arc<Mutex<DaemonState>>) -> Result<()> 
     query.use_regex = req.regex;
     query.case_sensitive = req.case_sensitive;
 
+    let files_count = files.len();
+    let started = Instant::now();
     let cancel = Arc::new(AtomicBool::new(false));
     let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<search::SearchResult>>(256);
+    let (stats_tx, stats_rx) = std::sync::mpsc::channel::<usize>();
     std::thread::spawn(move || {
-        search::search_project_streaming(&files, &query, tx, cancel, ast_cache);
+        let cache_hits = search::search_project_streaming(&files, &query, tx, cancel, ast_cache);
+        let _ = stats_tx.send(cache_hits);
     });
 
     let mut file_lines: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
@@ -303,6 +320,8 @@ fn handle_conn(stream: TcpStream, state: Arc<Mutex<DaemonState>>) -> Result<()> 
                 file: r.file_path,
                 line: (r.line + 1) as u32,
                 col: (r.col + 1) as u32,
+                end_line: (r.end_line + 1) as u32,
+                end_col: (r.end_col + 1) as u32,
                 text,
                 kind: r.node_kind,
                 capture: r.capture_name,
@@ -315,7 +334,13 @@ fn handle_conn(stream: TcpStream, state: Arc<Mutex<DaemonState>>) -> Result<()> 
     }
 
     if write_ok {
-        let done = serde_json::to_string(&DaemonMsg::Done { total })?;
+        let cache_hits = stats_rx.recv().unwrap_or(0);
+        let done = serde_json::to_string(&DaemonMsg::Done {
+            total,
+            ms: started.elapsed().as_millis() as u64,
+            cache_hits,
+            files: files_count,
+        })?;
         let _ = writeln!(writer, "{done}");
     }
 
@@ -346,8 +371,8 @@ pub fn try_client_search(root: &Path, req: &DaemonRequest) -> Option<Vec<DaemonH
     for line in BufReader::new(&stream).lines() {
         let line = line.ok()?;
         match serde_json::from_str::<DaemonMsg>(&line).ok()? {
-            DaemonMsg::Hit { file, line: ln, col, text, kind, capture } => {
-                hits.push(DaemonHit { file, line: ln, col, text, kind, capture });
+            DaemonMsg::Hit { file, line: ln, col, end_line, end_col, text, kind, capture } => {
+                hits.push(DaemonHit { file, line: ln, col, end_line, end_col, text, kind, capture });
             }
             DaemonMsg::Done { .. } => break,
             DaemonMsg::Error { message } => {

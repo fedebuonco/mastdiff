@@ -157,11 +157,39 @@ body {
 
 /* ── Status + results ─────────────────────────────────────────────────── */
 
+#results-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 6px 0;
+    min-height: 16px;
+}
+
 #status {
+    flex: 1;
     color: var(--vscode-descriptionForeground);
     font-size: 11px;
-    margin: 6px 0;
-    min-height: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#collapse-all {
+    flex: none;
+    appearance: none;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1;
+    padding: 1px 4px;
+}
+
+#collapse-all:hover {
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
 }
 
 #results {

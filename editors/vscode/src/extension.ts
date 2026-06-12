@@ -21,9 +21,22 @@ interface Hit {
     line: number;
     /** 1-based */
     col: number;
+    /** 1-based end of the match, for exact-range highlighting */
+    end_line?: number;
+    end_col?: number;
     text: string;
     kind: string;
     capture: string;
+}
+
+/** How a finished search was served — drives the status-line stats. */
+interface SearchStats {
+    elapsedMs: number;
+    engine: 'daemon' | 'subprocess';
+    /** Files served from the warm AST cache (daemon only). */
+    cacheHits?: number;
+    /** Total files searched (daemon only). */
+    filesSearched?: number;
 }
 
 /** A Hit plus the workspace-relative path the webview displays. */
@@ -167,7 +180,13 @@ async function ensureDaemon(root: string): Promise<number | undefined> {
 
 // ── TCP search ────────────────────────────────────────────────────────────
 
-function runSearchDaemon(port: number, req: SearchRequest): Promise<Hit[]> {
+interface DaemonResult {
+    hits: Hit[];
+    cacheHits: number;
+    filesSearched: number;
+}
+
+function runSearchDaemon(port: number, req: SearchRequest): Promise<DaemonResult> {
     return new Promise((resolve, reject) => {
         const payload = JSON.stringify({
             query: req.query,
@@ -178,6 +197,8 @@ function runSearchDaemon(port: number, req: SearchRequest): Promise<Hit[]> {
         }) + '\n';
 
         const hits: Hit[] = [];
+        let cacheHits = 0;
+        let filesSearched = 0;
         let settled = false;
         const sock = net.connect(port, '127.0.0.1');
         sock.setTimeout(120_000);
@@ -186,7 +207,7 @@ function runSearchDaemon(port: number, req: SearchRequest): Promise<Hit[]> {
             if (settled) { return; }
             settled = true;
             sock.destroy();
-            if (err) { reject(err); } else { resolve(hits); }
+            if (err) { reject(err); } else { resolve({ hits, cacheHits, filesSearched }); }
         }
 
         sock.on('connect', () => sock.write(payload));
@@ -206,11 +227,15 @@ function runSearchDaemon(port: number, req: SearchRequest): Promise<Hit[]> {
                             file: msg.file as string,
                             line: msg.line as number,
                             col: msg.col as number,
+                            end_line: msg.end_line as number,
+                            end_col: msg.end_col as number,
                             text: msg.text as string,
                             kind: msg.kind as string,
                             capture: msg.capture as string,
                         });
                     } else if (msg.type === 'done') {
+                        cacheHits = (msg.cache_hits as number) ?? 0;
+                        filesSearched = (msg.files as number) ?? 0;
                         done();
                     } else if (msg.type === 'error') {
                         done(new Error(msg.message as string));
@@ -281,14 +306,30 @@ function friendlyError(err: unknown): string {
 
 // ── Open file ─────────────────────────────────────────────────────────────
 
-async function revealHit(hit: { file: string; line: number; col: number }, preview: boolean): Promise<void> {
-    const pos = new vscode.Position(hit.line - 1, hit.col - 1);
+// Same highlight style the built-in Search uses when revealing a match.
+const matchDecoration = vscode.window.createTextEditorDecorationType({
+    backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
+    borderRadius: '2px',
+});
+
+async function revealHit(
+    hit: { file: string; line: number; col: number; end_line?: number; end_col?: number },
+    preview: boolean,
+): Promise<void> {
+    const start = new vscode.Position(hit.line - 1, hit.col - 1);
+    const end = hit.end_line && hit.end_col
+        ? new vscode.Position(hit.end_line - 1, hit.end_col - 1)
+        : start;
+    const range = new vscode.Range(start, end);
     const doc = await vscode.workspace.openTextDocument(hit.file);
-    await vscode.window.showTextDocument(doc, {
+    const editor = await vscode.window.showTextDocument(doc, {
         preview,
         preserveFocus: preview,
-        selection: new vscode.Range(pos, pos),
+        selection: range,
     });
+    // Flash-highlight the exact match range, then fade it out.
+    editor.setDecorations(matchDecoration, [range]);
+    setTimeout(() => editor.setDecorations(matchDecoration, []), 2500);
 }
 
 // ── Search view ───────────────────────────────────────────────────────────
@@ -387,20 +428,31 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
         const mine = ++this.generation;
 
         try {
+            const t0 = Date.now();
             let hits: Hit[];
+            let stats: SearchStats;
 
             // Try daemon first; fall back to subprocess on any failure.
             const port = await ensureDaemon(root);
             if (port !== undefined) {
                 try {
-                    hits = await runSearchDaemon(port, req);
+                    const res = await runSearchDaemon(port, req);
+                    hits = res.hits;
+                    stats = {
+                        elapsedMs: Date.now() - t0,
+                        engine: 'daemon',
+                        cacheHits: res.cacheHits,
+                        filesSearched: res.filesSearched,
+                    };
                 } catch (daemonErr) {
                     // Daemon died or returned an error — clear port and fall back.
                     daemonPort = undefined;
                     hits = await runSearchSubprocess(req, root);
+                    stats = { elapsedMs: Date.now() - t0, engine: 'subprocess' };
                 }
             } else {
                 hits = await runSearchSubprocess(req, root);
+                stats = { elapsedMs: Date.now() - t0, engine: 'subprocess' };
             }
 
             if (mine !== this.generation) { return; }
@@ -410,7 +462,7 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
                 const abs = path.isAbsolute(h.file) ? h.file : path.join(root, h.file);
                 return { ...h, file: abs, rel: path.relative(root, abs) };
             });
-            this.post({ type: 'results', id: req.id, hits: shown, total: hits.length });
+            this.post({ type: 'results', id: req.id, hits: shown, total: hits.length, stats });
             this.addHistory(req, hits.length);
             this.post({ type: 'history', items: this.history() });
         } catch (err) {
@@ -456,7 +508,10 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
       <input id="include" type="text" spellcheck="false" placeholder="files to include (e.g. src/**,*.hpp)">
       <input id="exclude" type="text" spellcheck="false" placeholder="files to exclude (e.g. tests/**,vendor/**)">
     </details>
-    <div id="status"></div>
+    <div id="results-bar">
+      <span id="status"></span>
+      <button id="collapse-all" hidden title="Collapse All">⊟</button>
+    </div>
     <div id="results"></div>
   </div>
 
@@ -522,4 +577,5 @@ export function deactivate(): void {
         daemonProc.kill();
         daemonProc = undefined;
     }
+    matchDecoration.dispose();
 }

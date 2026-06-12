@@ -14,6 +14,7 @@
     const chipsEl = $('#chips');
     const globsEl = $('#globs');
     const statusEl = $('#status');
+    const collapseAllBtn = $('#collapse-all');
     const resultsEl = $('#results');
     const historyList = $('#history-list');
     const tabSearch = $('#tab-search');
@@ -94,6 +95,7 @@
         if (!query) {
             resultsEl.textContent = '';
             statusEl.textContent = '';
+            collapseAllBtn.hidden = true;
             return;
         }
         statusEl.textContent = 'Searching…';
@@ -148,9 +150,30 @@
     tabHistory.addEventListener('click', () => showTab('history'));
     $('#clear-history').addEventListener('click', () => vscode.postMessage({ type: 'clearHistory' }));
 
+    // ── Collapse / expand all file groups ────────────────────────────────
+    let fileGroups = []; // [{matches, twistie}] for the current result set
+    let allCollapsed = false;
+
+    function updateCollapseBtn() {
+        collapseAllBtn.textContent = allCollapsed ? '⊞' : '⊟';
+        collapseAllBtn.title = allCollapsed ? 'Expand All' : 'Collapse All';
+    }
+
+    collapseAllBtn.addEventListener('click', () => {
+        allCollapsed = !allCollapsed;
+        for (const g of fileGroups) {
+            g.matches.hidden = allCollapsed;
+            g.twistie.textContent = allCollapsed ? '▸' : '▾';
+        }
+        updateCollapseBtn();
+    });
+
     // ── Results rendering (grouped by file, like the built-in Search) ────
-    function renderResults(hits, total) {
+    function renderResults(hits, total, stats) {
         resultsEl.textContent = '';
+        fileGroups = [];
+        allCollapsed = false;
+        updateCollapseBtn();
         const byFile = new Map();
         for (const h of hits) {
             if (!byFile.has(h.rel)) {
@@ -158,13 +181,27 @@
             }
             byFile.get(h.rel).push(h);
         }
+        collapseAllBtn.hidden = byFile.size === 0;
 
         const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
         let summary = `${plural(total, 'result')} in ${plural(byFile.size, 'file')}`;
         if (total > hits.length) {
             summary += ` — showing first ${hits.length}`;
         }
-        statusEl.textContent = total === 0 ? 'No results found.' : summary;
+        if (stats) {
+            summary += ` · ${stats.elapsedMs} ms`;
+            if (stats.engine === 'daemon') {
+                const hitsN = stats.cacheHits || 0;
+                summary += hitsN > 0
+                    ? ` · ⚡ cached (${hitsN}/${stats.filesSearched} files)`
+                    : ' · not cached';
+            } else {
+                summary += ' · not cached (cold run)';
+            }
+        }
+        statusEl.textContent = total === 0
+            ? `No results found.${stats ? ` · ${stats.elapsedMs} ms` : ''}`
+            : summary;
 
         for (const [rel, fileHits] of byFile) {
             const slash = Math.max(rel.lastIndexOf('/'), rel.lastIndexOf('\\'));
@@ -197,11 +234,17 @@
                 text.className = 'text';
                 text.textContent = h.text;
                 row.append(lineno, text);
-                row.addEventListener('click', () =>
-                    vscode.postMessage({ type: 'open', file: h.file, line: h.line, col: h.col }),
-                );
+                const openMsg = {
+                    type: 'open',
+                    file: h.file,
+                    line: h.line,
+                    col: h.col,
+                    end_line: h.end_line,
+                    end_col: h.end_col,
+                };
+                row.addEventListener('click', () => vscode.postMessage(openMsg));
                 row.addEventListener('dblclick', () =>
-                    vscode.postMessage({ type: 'open', file: h.file, line: h.line, col: h.col, pin: true }),
+                    vscode.postMessage({ ...openMsg, pin: true }),
                 );
                 matches.appendChild(row);
             }
@@ -211,6 +254,7 @@
                 twistie.textContent = matches.hidden ? '▸' : '▾';
             });
 
+            fileGroups.push({ matches, twistie });
             resultsEl.append(header, matches);
         }
     }
@@ -275,12 +319,13 @@
         switch (msg.type) {
             case 'results':
                 if (msg.id !== searchId) return; // stale
-                renderResults(msg.hits, msg.total);
+                renderResults(msg.hits, msg.total, msg.stats);
                 break;
             case 'error':
                 if (msg.id !== undefined && msg.id !== searchId) return;
                 statusEl.textContent = msg.message;
                 resultsEl.textContent = '';
+                collapseAllBtn.hidden = true;
                 break;
             case 'history':
                 renderHistory(msg.items);

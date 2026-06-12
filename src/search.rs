@@ -243,6 +243,10 @@ pub struct SearchResult {
     pub line: usize,
     #[allow(dead_code)]
     pub col: usize,
+    /// End of the matched node/text (0-based, inclusive line / exclusive col),
+    /// so editors can highlight the exact match range.
+    pub end_line: usize,
+    pub end_col: usize,
     pub snippet: String,
     /// Actual tree-sitter node kind of the captured node (e.g. "identifier")
     pub node_kind: String,
@@ -416,16 +420,19 @@ impl PreparedSearch {
 /// when all files are done so the receiver can detect completion via
 /// `TryRecvError::Disconnected`.  Checks `cancel` before processing each
 /// file; set it to `true` to stop early (e.g. when a new search starts).
+///
+/// Returns the number of files served from the AST cache (warm hits),
+/// so callers can report cache effectiveness.
 pub fn search_project_streaming(
     files: &[String],
     query: &SearchQuery,
     tx: mpsc::SyncSender<Vec<SearchResult>>,
     cancel: Arc<AtomicBool>,
     ast_cache: Arc<Mutex<AstCache>>,
-) {
+) -> usize {
     let _s = crate::tracer::span("search::project_streaming");
     if query.is_empty() {
-        return;
+        return 0;
     }
     log::info!(
         "search (stream): mode={} files={}",
@@ -451,6 +458,7 @@ pub fn search_project_streaming(
     } else {
         HashMap::new()
     };
+    let cache_hits = cached_trees.len();
 
     // ── Phase 3 accumulator: workers push new entries here ──────────────────
     let new_entries: Mutex<Vec<NewCacheEntry>> = Mutex::new(Vec::new());
@@ -483,6 +491,8 @@ pub fn search_project_streaming(
         }
         log::debug!("ast_cache: inserted {} new entries", n);
     }
+
+    cache_hits
 }
 
 // Carried from search_file_prepared back up to search_project_streaming for caching.
@@ -664,6 +674,8 @@ fn search_src_prepared(
             file_path: file_path.to_string(),
             line,
             col,
+            end_line: node.end_position().row,
+            end_col: node.end_position().column,
             snippet: make_snippet(line_text, col),
             node_kind: node.kind().to_string(),
             capture_name,
@@ -807,6 +819,8 @@ pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<Search
             file_path: file_path.to_string(),
             line,
             col,
+            end_line: node.end_position().row,
+            end_col: node.end_position().column,
             snippet: make_snippet(line_text, col),
             node_kind: node.kind().to_string(),
             capture_name,
@@ -885,6 +899,8 @@ fn grep(file_path: &str, src: &str, text: &str, use_regex: bool, case_sensitive:
                     file_path: file_path.to_string(),
                     line,
                     col,
+                    end_line: line,
+                    end_col: m.end(),
                     snippet: make_snippet(content, col),
                     node_kind: "text".into(),
                     capture_name: String::new(),
@@ -903,6 +919,8 @@ fn grep(file_path: &str, src: &str, text: &str, use_regex: bool, case_sensitive:
                     file_path: file_path.to_string(),
                     line,
                     col,
+                    end_line: line,
+                    end_col: col + text.len(),
                     snippet: make_snippet(content, col),
                     node_kind: "text".into(),
                     capture_name: String::new(),
@@ -920,6 +938,8 @@ fn grep(file_path: &str, src: &str, text: &str, use_regex: bool, case_sensitive:
                     file_path: file_path.to_string(),
                     line,
                     col,
+                    end_line: line,
+                    end_col: col + needle.len(),
                     snippet: make_snippet(content, col),
                     node_kind: "text".into(),
                     capture_name: String::new(),
