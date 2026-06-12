@@ -1,0 +1,39 @@
+name: Extension
+
+on:
+  push:
+    branches: [master]
+    paths: ['editors/vscode/**', '.github/workflows/extension.yml']
+  pull_request:
+    paths: ['editors/vscode/**', '.github/workflows/extension.yml']
+
+jobs:
+  build:
+    name: Build .vsix
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile + package
+        run: ./build-vsix.sh
+
+      - name: Upload .vsix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mastdiff-search-vsix
+          path: editors/vscode/mastdiff-search-*.vsix
+          if-no-files-found: error
