@@ -4,6 +4,7 @@ pub mod tracer;
 pub mod ast_cache;
 pub mod ast_diff;
 pub mod config;
+pub mod daemon;
 pub mod input;
 pub mod project;
 pub mod search;

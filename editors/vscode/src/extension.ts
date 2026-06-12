@@ -1,13 +1,16 @@
-// mastdiff: Semantic C++ Search — a VS Code front-end for the mastdiff CLI.
+// mastdiff: Semantic C++ Search — VS Code front-end.
 //
-// The extension is a thin client: every query is executed by
-// `mastdiff --search <query> --json <root>`, which runs native tree-sitter
-// queries over the whole project in parallel and prints one JSON object per
-// result line. The UI is a sidebar webview styled after the built-in Search
-// view: query box with filter chips, results grouped by file underneath,
-// and a History tab with previous searches.
+// The extension spawns `mastdiff --daemon <root>` on first search. The daemon
+// keeps a warm AST cache across queries, so subsequent searches are much
+// faster. Each query opens a short-lived TCP connection to the daemon.
+//
+// Fallback: if the daemon fails to start (binary missing, etc.) the extension
+// falls back to the original subprocess-per-search approach.
 
 import * as cp from 'child_process';
+import * as fs from 'fs';
+import * as net from 'net';
+import * as os from 'os';
 import * as path from 'path';
 import * as readline from 'readline';
 import * as vscode from 'vscode';
@@ -49,7 +52,11 @@ interface HistoryItem {
 
 const HISTORY_KEY = 'mastdiff.history';
 
-let activeProc: cp.ChildProcess | undefined;
+// ── Daemon state ─────────────────────────────────────────────────────────
+
+let daemonPort: number | undefined;
+let daemonProc: cp.ChildProcess | undefined;
+let daemonStarting: Promise<number | undefined> | undefined;
 
 function config(): vscode.WorkspaceConfiguration {
     return vscode.workspace.getConfiguration('mastdiff');
@@ -59,8 +66,170 @@ function workspaceRoot(): string | undefined {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
-/** Run one headless mastdiff search. Kills any search still in flight. */
-function runSearch(req: SearchRequest, root: string): Promise<Hit[]> {
+// FNV-1a 64-bit over UTF-8 bytes — must match the Rust implementation in
+// src/daemon.rs so that both sides derive the same port file path.
+function fnv1a64(s: string): bigint {
+    const bytes = Buffer.from(s, 'utf8');
+    let hash = 14695981039346656037n;
+    const prime = 1099511628211n;
+    for (const byte of bytes) {
+        hash ^= BigInt(byte);
+        hash = BigInt.asUintN(64, hash * prime);
+    }
+    return hash;
+}
+
+function daemonPortFile(root: string): string {
+    const canonical = path.resolve(root);
+    const hex = fnv1a64(canonical).toString(16).padStart(16, '0');
+    return path.join(os.tmpdir(), `mastdiff-${hex}.port`);
+}
+
+function tryReadPortFile(root: string): number | undefined {
+    try {
+        const s = fs.readFileSync(daemonPortFile(root), 'utf8');
+        const p = parseInt(s.trim(), 10);
+        return isNaN(p) ? undefined : p;
+    } catch {
+        return undefined;
+    }
+}
+
+function pingDaemon(port: number): Promise<boolean> {
+    return new Promise(resolve => {
+        const sock = net.connect(port, '127.0.0.1');
+        sock.setTimeout(300);
+        sock.on('connect', () => { sock.destroy(); resolve(true); });
+        sock.on('error', () => resolve(false));
+        sock.on('timeout', () => { sock.destroy(); resolve(false); });
+    });
+}
+
+function spawnDaemon(root: string): Promise<number | undefined> {
+    const bin = config().get<string>('binaryPath', 'mastdiff');
+    return new Promise(resolve => {
+        const proc = cp.spawn(bin, ['--daemon', root], {
+            cwd: root,
+            stdio: ['ignore', 'ignore', 'pipe'],
+            detached: false,
+        });
+        daemonProc = proc;
+
+        const rl = readline.createInterface({ input: proc.stderr! });
+        rl.on('line', (line: string) => {
+            const m = line.match(/^READY (\d+)$/);
+            if (m) {
+                const port = parseInt(m[1], 10);
+                daemonPort = port;
+                rl.close();
+                proc.stderr?.resume(); // drain remaining stderr to avoid pipe stall
+                resolve(port);
+            }
+        });
+
+        proc.on('error', () => { rl.close(); resolve(undefined); });
+        proc.on('exit', () => {
+            if (daemonProc === proc) {
+                daemonProc = undefined;
+                daemonPort = undefined;
+            }
+        });
+
+        // Give the daemon up to 20 s to load the project and signal ready.
+        setTimeout(() => { rl.close(); resolve(undefined); }, 20_000);
+    });
+}
+
+async function ensureDaemon(root: string): Promise<number | undefined> {
+    // Cached port from this session
+    if (daemonPort !== undefined) {
+        if (await pingDaemon(daemonPort)) {
+            return daemonPort;
+        }
+        daemonPort = undefined;
+    }
+
+    // Another call is already spawning the daemon — share the promise
+    if (daemonStarting) {
+        return daemonStarting;
+    }
+
+    // Daemon may already be running from a previous VS Code session
+    const existing = tryReadPortFile(root);
+    if (existing !== undefined && await pingDaemon(existing)) {
+        daemonPort = existing;
+        return existing;
+    }
+
+    daemonStarting = spawnDaemon(root).finally(() => { daemonStarting = undefined; });
+    return daemonStarting;
+}
+
+// ── TCP search ────────────────────────────────────────────────────────────
+
+function runSearchDaemon(port: number, req: SearchRequest): Promise<Hit[]> {
+    return new Promise((resolve, reject) => {
+        const payload = JSON.stringify({
+            query: req.query,
+            include: req.include,
+            exclude: req.exclude,
+            regex: req.regex,
+            case_sensitive: req.caseSensitive,
+        }) + '\n';
+
+        const hits: Hit[] = [];
+        let settled = false;
+        const sock = net.connect(port, '127.0.0.1');
+        sock.setTimeout(120_000);
+
+        function done(err?: Error): void {
+            if (settled) { return; }
+            settled = true;
+            sock.destroy();
+            if (err) { reject(err); } else { resolve(hits); }
+        }
+
+        sock.on('connect', () => sock.write(payload));
+
+        let buf = '';
+        sock.on('data', (chunk: Buffer) => {
+            buf += chunk.toString('utf8');
+            let nl: number;
+            while ((nl = buf.indexOf('\n')) !== -1) {
+                const line = buf.slice(0, nl).trim();
+                buf = buf.slice(nl + 1);
+                if (!line) { continue; }
+                try {
+                    const msg = JSON.parse(line) as { type: string; [k: string]: unknown };
+                    if (msg.type === 'hit') {
+                        hits.push({
+                            file: msg.file as string,
+                            line: msg.line as number,
+                            col: msg.col as number,
+                            text: msg.text as string,
+                            kind: msg.kind as string,
+                            capture: msg.capture as string,
+                        });
+                    } else if (msg.type === 'done') {
+                        done();
+                    } else if (msg.type === 'error') {
+                        done(new Error(msg.message as string));
+                    }
+                } catch { /* ignore malformed lines */ }
+            }
+        });
+
+        sock.on('close', () => done());
+        sock.on('error', (e) => done(e));
+        sock.on('timeout', () => done(new Error('daemon search timed out')));
+    });
+}
+
+// ── Subprocess fallback ───────────────────────────────────────────────────
+
+let activeProc: cp.ChildProcess | undefined;
+
+function runSearchSubprocess(req: SearchRequest, root: string): Promise<Hit[]> {
     if (activeProc) {
         activeProc.kill();
         activeProc = undefined;
@@ -68,18 +237,10 @@ function runSearch(req: SearchRequest, root: string): Promise<Hit[]> {
     return new Promise((resolve, reject) => {
         const bin = config().get<string>('binaryPath', 'mastdiff');
         const args = ['--search', req.query, '--json'];
-        if (req.include.trim()) {
-            args.push('--include', req.include.trim());
-        }
-        if (req.exclude.trim()) {
-            args.push('--exclude', req.exclude.trim());
-        }
-        if (req.regex) {
-            args.push('--regex');
-        }
-        if (req.caseSensitive) {
-            args.push('--case-sensitive');
-        }
+        if (req.include.trim()) { args.push('--include', req.include.trim()); }
+        if (req.exclude.trim()) { args.push('--exclude', req.exclude.trim()); }
+        if (req.regex) { args.push('--regex'); }
+        if (req.caseSensitive) { args.push('--case-sensitive'); }
         args.push(root);
 
         const proc = cp.spawn(bin, args, { cwd: root });
@@ -89,21 +250,13 @@ function runSearch(req: SearchRequest, root: string): Promise<Hit[]> {
         let stderr = '';
         const rl = readline.createInterface({ input: proc.stdout });
         rl.on('line', (line) => {
-            try {
-                hits.push(JSON.parse(line) as Hit);
-            } catch {
-                // ignore non-JSON noise on stdout
-            }
+            try { hits.push(JSON.parse(line) as Hit); } catch { /* ignore */ }
         });
         proc.stderr.on('data', (chunk) => (stderr += chunk));
         proc.on('error', (err) => reject(err));
         proc.on('close', (code, signal) => {
-            if (activeProc === proc) {
-                activeProc = undefined;
-            }
+            if (activeProc === proc) { activeProc = undefined; }
             if (signal) {
-                // Superseded by a newer search — the caller's generation
-                // counter discards this result set anyway.
                 resolve([]);
             } else if (code !== 0) {
                 reject(new Error(stderr.trim() || `mastdiff exited with code ${code}`));
@@ -126,6 +279,8 @@ function friendlyError(err: unknown): string {
     return msg;
 }
 
+// ── Open file ─────────────────────────────────────────────────────────────
+
 async function revealHit(hit: { file: string; line: number; col: number }, preview: boolean): Promise<void> {
     const pos = new vscode.Position(hit.line - 1, hit.col - 1);
     const doc = await vscode.workspace.openTextDocument(hit.file);
@@ -136,13 +291,13 @@ async function revealHit(hit: { file: string; line: number; col: number }, previ
     });
 }
 
+// ── Search view ───────────────────────────────────────────────────────────
+
 class SearchViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'mastdiff.searchView';
 
     private view?: vscode.WebviewView;
-    /** Query queued by a command before the webview finished loading. */
     private pendingQuery?: string;
-    /** Only the most recent search may publish results. */
     private generation = 0;
 
     constructor(private readonly ctx: vscode.ExtensionContext) {}
@@ -156,25 +311,21 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
         view.webview.html = this.renderHtml(view.webview);
         view.webview.onDidReceiveMessage((msg) => this.onMessage(msg));
         view.onDidDispose(() => {
-            if (this.view === view) {
-                this.view = undefined;
-            }
+            if (this.view === view) { this.view = undefined; }
         });
     }
 
-    /** Focus the view, creating it if needed. */
     focus(): void {
         vscode.commands.executeCommand(`${SearchViewProvider.viewType}.focus`);
     }
 
-    /** Focus the view and run `query` in it. */
     setQueryAndRun(query: string): void {
         if (this.view) {
             this.view.show?.(true);
             this.post({ type: 'setQuery', value: query, run: true });
         } else {
             this.pendingQuery = query;
-            this.focus(); // resolveWebviewView → webview sends 'ready' → init carries pendingQuery
+            this.focus();
         }
     }
 
@@ -188,20 +339,13 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
 
     private addHistory(req: SearchRequest, count: number): void {
         const same = (h: HistoryItem) =>
-            h.query === req.query &&
-            h.include === req.include &&
-            h.exclude === req.exclude &&
-            h.caseSensitive === req.caseSensitive &&
+            h.query === req.query && h.include === req.include &&
+            h.exclude === req.exclude && h.caseSensitive === req.caseSensitive &&
             h.regex === req.regex;
         const max = Math.max(1, config().get<number>('historySize', 50));
         const entry: HistoryItem = {
-            query: req.query,
-            include: req.include,
-            exclude: req.exclude,
-            caseSensitive: req.caseSensitive,
-            regex: req.regex,
-            count,
-            ts: Date.now(),
+            query: req.query, include: req.include, exclude: req.exclude,
+            caseSensitive: req.caseSensitive, regex: req.regex, count, ts: Date.now(),
         };
         const items = [entry, ...this.history().filter((h) => !same(h))].slice(0, max);
         this.ctx.workspaceState.update(HISTORY_KEY, items);
@@ -209,7 +353,7 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
 
     private async onMessage(msg: any): Promise<void> {
         switch (msg.type) {
-            case 'ready': {
+            case 'ready':
                 this.post({
                     type: 'init',
                     history: this.history(),
@@ -220,7 +364,6 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
                 });
                 this.pendingQuery = undefined;
                 break;
-            }
             case 'search':
                 await this.doSearch(msg as SearchRequest);
                 break;
@@ -240,12 +383,28 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
             this.post({ type: 'error', id: req.id, message: 'Open a folder to search.' });
             return;
         }
+
         const mine = ++this.generation;
+
         try {
-            const hits = await runSearch(req, root);
-            if (mine !== this.generation) {
-                return;
+            let hits: Hit[];
+
+            // Try daemon first; fall back to subprocess on any failure.
+            const port = await ensureDaemon(root);
+            if (port !== undefined) {
+                try {
+                    hits = await runSearchDaemon(port, req);
+                } catch (daemonErr) {
+                    // Daemon died or returned an error — clear port and fall back.
+                    daemonPort = undefined;
+                    hits = await runSearchSubprocess(req, root);
+                }
+            } else {
+                hits = await runSearchSubprocess(req, root);
             }
+
+            if (mine !== this.generation) { return; }
+
             const max = config().get<number>('maxResults', 500);
             const shown: WebviewHit[] = hits.slice(0, max).map((h) => {
                 const abs = path.isAbsolute(h.file) ? h.file : path.join(root, h.file);
@@ -255,9 +414,7 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
             this.addHistory(req, hits.length);
             this.post({ type: 'history', items: this.history() });
         } catch (err) {
-            if (mine !== this.generation) {
-                return;
-            }
+            if (mine !== this.generation) { return; }
             this.post({ type: 'error', id: req.id, message: friendlyError(err) });
         }
     }
@@ -317,18 +474,18 @@ class SearchViewProvider implements vscode.WebviewViewProvider {
     }
 }
 
+// ── Word under cursor ──────────────────────────────────────────────────────
+
 function wordUnderCursor(): string | undefined {
     const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-        return undefined;
-    }
+    if (!editor) { return undefined; }
     const sel = editor.selection;
-    if (!sel.isEmpty) {
-        return editor.document.getText(sel);
-    }
+    if (!sel.isEmpty) { return editor.document.getText(sel); }
     const range = editor.document.getWordRangeAtPosition(sel.active);
     return range ? editor.document.getText(range) : undefined;
 }
+
+// ── Activation / deactivation ─────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext): void {
     const provider = new SearchViewProvider(context);
@@ -344,11 +501,25 @@ export function activate(context: vscode.ExtensionContext): void {
             provider.setQueryAndRun(word ? `fn:${word}` : 'fn:');
         }),
     );
+
+    // Kick off daemon pre-warm as soon as a workspace is open, so the first
+    // search is instant rather than having to wait for project discovery.
+    const root = workspaceRoot();
+    if (root) {
+        ensureDaemon(root).then(
+            (port) => { if (port) { /* daemon ready */ } },
+            () => { /* silently ignore — subprocess fallback covers it */ },
+        );
+    }
 }
 
 export function deactivate(): void {
     if (activeProc) {
         activeProc.kill();
         activeProc = undefined;
+    }
+    if (daemonProc) {
+        daemonProc.kill();
+        daemonProc = undefined;
     }
 }

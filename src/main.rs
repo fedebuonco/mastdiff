@@ -12,6 +12,7 @@ mod app;
 mod ast_cache;
 mod ast_diff;
 mod config;
+mod daemon;
 mod export;
 mod input;
 mod logger;
@@ -29,7 +30,7 @@ use config::OpenIn;
 #[command(name = "mastdiff", about = "C++ diff visualizer with AST + project search")]
 struct Cli {
     /// Path to a C++ file, a second file to diff against, or a project directory
-    #[arg(required_unless_present = "search")]
+    #[arg(required_unless_present_any = ["search", "daemon"])]
     left: Option<String>,
     /// Second file to diff (optional)
     right: Option<String>,
@@ -57,15 +58,53 @@ struct Cli {
     /// Match case-sensitively (default is case-insensitive)
     #[arg(long, requires = "search")]
     case_sensitive: bool,
+
+    /// Run as a persistent search daemon over ROOT (default ".").
+    /// Prints "READY <port>" to stderr once listening.
+    #[arg(long, value_name = "ROOT")]
+    daemon: Option<String>,
 }
 
-/// Headless search mode (`--search`): enumerate files, run one search pass,
-/// print results to stdout, exit. Powers editor integrations such as the
-/// VS Code extension in editors/vscode.
+/// Headless search mode (`--search`): try the daemon first for a warm-cache
+/// hit, then fall back to a cold in-process search if no daemon is running.
 fn headless_search(root: &str, raw_query: &str, cli: &Cli) -> Result<()> {
     use std::io::Write;
 
     let root_path = Path::new(root);
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    // ── Fast path: delegate to running daemon ─────────────────────────────
+    if root_path.is_dir() {
+        let req = daemon::DaemonRequest {
+            query: raw_query.to_string(),
+            include: cli.include.clone().unwrap_or_default(),
+            exclude: cli.exclude.clone().unwrap_or_default(),
+            regex: cli.regex,
+            case_sensitive: cli.case_sensitive,
+        };
+        if let Some(hits) = daemon::try_client_search(root_path, &req) {
+            log::info!("headless search (daemon): {} hits", hits.len());
+            for h in &hits {
+                if cli.json {
+                    let obj = serde_json::json!({
+                        "file": h.file,
+                        "line": h.line,
+                        "col":  h.col,
+                        "text": h.text,
+                        "kind": h.kind,
+                        "capture": h.capture,
+                    });
+                    writeln!(out, "{obj}")?;
+                } else {
+                    writeln!(out, "{}:{}:{}: {}", h.file, h.line, h.col, h.text)?;
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    // ── Slow path: in-process search (cold cache) ─────────────────────────
     let files: Vec<String> = if root_path.is_dir() {
         let data = project::load(root_path)?;
         let include = search::FileFilter::parse(cli.include.as_deref().unwrap_or(""));
@@ -75,10 +114,8 @@ fn headless_search(root: &str, raw_query: &str, cli: &Cli) -> Result<()> {
             .iter()
             .map(|tu| tu.file_path.clone())
             .filter(|path| {
-                // Same semantics as the TUI search: globs match the relative
-                // path inside the project root so `src/**` works as expected.
                 let rel = path
-                    .strip_prefix(&format!("{}/", project_root))
+                    .strip_prefix(&format!("{project_root}/"))
                     .or_else(|| path.strip_prefix(&project_root))
                     .unwrap_or(path.as_str());
                 let pass_include = include.is_empty() || include.matches(rel) || include.matches(path);
@@ -89,7 +126,7 @@ fn headless_search(root: &str, raw_query: &str, cli: &Cli) -> Result<()> {
     } else {
         vec![root.to_string()]
     };
-    log::info!("headless search: {:?} over {} files", raw_query, files.len());
+    log::info!("headless search (in-process): {:?} over {} files", raw_query, files.len());
 
     let mut query = search::parse_query(raw_query);
     query.use_regex = cli.regex;
@@ -97,12 +134,7 @@ fn headless_search(root: &str, raw_query: &str, cli: &Cli) -> Result<()> {
 
     let results = search::search_project(&files, &query);
 
-    // The stored snippet is a short window around the match (sized for the
-    // TUI); editors want the whole line, so re-read it from the hit files.
     let mut file_lines: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
     for r in &results {
         let lines = file_lines.entry(r.file_path.clone()).or_insert_with(|| {
             fs::read_to_string(&r.file_path)
@@ -114,16 +146,15 @@ fn headless_search(root: &str, raw_query: &str, cli: &Cli) -> Result<()> {
             .map(|l| l.trim().to_string())
             .unwrap_or_else(|| r.snippet.clone());
         if cli.json {
-            // Lines and columns are 1-based in the output, like grep/vimgrep.
             let obj = serde_json::json!({
                 "file": r.file_path,
                 "line": r.line + 1,
-                "col": r.col + 1,
+                "col":  r.col + 1,
                 "text": full_line,
                 "kind": r.node_kind,
                 "capture": r.capture_name,
             });
-            writeln!(out, "{}", obj)?;
+            writeln!(out, "{obj}")?;
         } else {
             writeln!(out, "{}:{}:{}: {}", r.file_path, r.line + 1, r.col + 1, full_line)?;
         }
@@ -144,6 +175,11 @@ fn main() -> Result<()> {
     );
 
     let cli = Cli::parse();
+
+    // Daemon mode — serve searches over TCP, no TUI.
+    if let Some(ref root) = cli.daemon {
+        return daemon::run_daemon(Path::new(root), &cfg);
+    }
 
     // Headless search mode — print results and exit, no TUI.
     if let Some(ref raw_query) = cli.search {
