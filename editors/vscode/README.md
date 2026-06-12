@@ -16,11 +16,25 @@ The `mastdiff` binary must be installed — grab a pre-built binary from the
 `cargo build --release` from the repo root. If it's not on your `PATH`, set
 `mastdiff.binaryPath`.
 
-## Usage
+## The search view
 
-Press `Ctrl+Alt+F` (`Cmd+Alt+F` on macOS) or run **mastdiff: Semantic C++
-Search** from the command palette, then type a query. Results stream in live
-as you type; `Enter` jumps to the selected result.
+Click the mastdiff icon in the Activity Bar (or press `Ctrl+Alt+F` /
+`Cmd+Alt+F`). The view is laid out like VS Code's built-in Search:
+
+- **Query box** with `Aa` (match case) and `.*` (regex) toggles. Results
+  stream in live as you type and appear grouped by file underneath; click a
+  match to open it (double-click to pin the editor). File groups collapse
+  like the standard search tree.
+- **Filter chips** — a row of colored blocks, one per semantic filter
+  (`fn:`, `call:`, `class:`, `var:`, `field:`, …). Click one to apply that
+  tree-sitter query prefix to whatever you've typed; click again to remove
+  it. The active chip is highlighted.
+- **files to include / exclude** — comma-separated globs, same as the
+  standard search (e.g. `src/**,*.hpp` / `tests/**,vendor/**`).
+- **History tab** — every search you run is saved (query, globs, toggles,
+  result count). Click an entry to re-run it; **Clear** wipes the list.
+
+## Query language
 
 | Query | Finds |
 |---|---|
@@ -53,11 +67,11 @@ the cursor:
 | Setting | Default | Description |
 |---|---|---|
 | `mastdiff.binaryPath` | `mastdiff` | Path to the mastdiff binary |
-| `mastdiff.include` | _(empty)_ | Comma-separated include globs, e.g. `src/**,*.hpp` |
-| `mastdiff.exclude` | _(empty)_ | Comma-separated exclude globs, e.g. `tests/**,vendor/**` |
+| `mastdiff.include` | _(empty)_ | Default include globs pre-filled in the view |
+| `mastdiff.exclude` | _(empty)_ | Default exclude globs pre-filled in the view |
 | `mastdiff.debounceMs` | `300` | Debounce before a search fires while typing |
-| `mastdiff.maxResults` | `500` | Maximum results shown in the picker |
-| `mastdiff.previewResults` | `true` | Preview the highlighted result while navigating |
+| `mastdiff.maxResults` | `500` | Maximum results shown in the results list |
+| `mastdiff.historySize` | `50` | Previous searches kept in the History tab |
 
 ## Building from source
 

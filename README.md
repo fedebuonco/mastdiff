@@ -58,7 +58,7 @@ Flags: `--json`, `--include <globs>`, `--exclude <globs>`, `--regex`, `--case-se
 
 ### VS Code extension
 
-[`editors/vscode/`](editors/vscode/) ships **mastdiff: Semantic C++ Search** — the structural search as a live picker inside VS Code. Press `Ctrl+Alt+F` (`Cmd+Alt+F` on macOS), type `call:render` or any query from the table above, and jump straight to a result. Context-menu actions search for calls to / definitions of the symbol under the cursor. The extension is a thin client over the headless CLI; see its [README](editors/vscode/README.md) for setup.
+[`editors/vscode/`](editors/vscode/) ships **mastdiff: Semantic C++ Search** — the structural search as a sidebar view styled after VS Code's built-in Search. Press `Ctrl+Alt+F` (`Cmd+Alt+F` on macOS): a query box with `Aa`/`.*` toggles, colored filter chips for every semantic prefix (`fn:`, `call:`, `class:`, …), results grouped by file underneath, include/exclude globs, and a History tab of previous searches. Context-menu actions search for calls to / definitions of the symbol under the cursor. The extension is a thin client over the headless CLI; see its [README](editors/vscode/README.md) for setup.
 
 ---
 

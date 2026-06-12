@@ -2,7 +2,7 @@
   "name": "mastdiff-search",
   "displayName": "mastdiff: Semantic C++ Search",
   "description": "Structural, tree-sitter-powered C++ search inside VS Code — find function definitions, call sites, classes, fields and more with simple fn:/call:/class: queries or raw tree-sitter S-expressions.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "fedebuonco",
   "repository": {
     "type": "git",
@@ -25,6 +25,24 @@
   "main": "./out/extension.js",
   "activationEvents": [],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mastdiff",
+          "title": "mastdiff",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "mastdiff": [
+        {
+          "type": "webview",
+          "id": "mastdiff.searchView",
+          "name": "Semantic C++ Search"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "mastdiff.search",
@@ -71,12 +89,12 @@
         "mastdiff.include": {
           "type": "string",
           "default": "",
-          "description": "Comma-separated include globs applied to every search (e.g. \"src/**,*.hpp\"). Empty = search everything."
+          "description": "Default include globs pre-filled in the search view (e.g. \"src/**,*.hpp\"). Empty = search everything."
         },
         "mastdiff.exclude": {
           "type": "string",
           "default": "",
-          "description": "Comma-separated exclude globs applied to every search (e.g. \"tests/**,vendor/**\")."
+          "description": "Default exclude globs pre-filled in the search view (e.g. \"tests/**,vendor/**\")."
         },
         "mastdiff.debounceMs": {
           "type": "number",
@@ -86,12 +104,12 @@
         "mastdiff.maxResults": {
           "type": "number",
           "default": 500,
-          "description": "Maximum number of results shown in the picker."
+          "description": "Maximum number of results shown in the results list."
         },
-        "mastdiff.previewResults": {
-          "type": "boolean",
-          "default": true,
-          "description": "Preview the highlighted result in the editor while navigating the picker."
+        "mastdiff.historySize": {
+          "type": "number",
+          "default": 50,
+          "description": "Maximum number of previous searches kept in the History tab."
         }
       }
     }
