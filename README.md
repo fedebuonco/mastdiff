@@ -111,6 +111,12 @@ log_level = "info"       # "off" | "error" | "warn" | "info" | "debug" | "trace"
 # In-memory AST parse cache cap (MiB). Set to 0 to disable.
 # Warm-cache searches skip tree-sitter re-parsing for unchanged files.
 ast_cache_mb = 128       # default: 128
+
+# Persistent on-disk symbol cache cap (MiB). Set to 0 to disable.
+# Content-addressed precomputed captures live under $XDG_CACHE_HOME/mastdiff/,
+# so cold shorthand searches (fn:, call:, class:, …) skip re-parsing across
+# process restarts. A hard cap with oldest-first eviction keeps it bounded.
+sym_cache_mb = 256       # default: 256
 ```
 
 ---

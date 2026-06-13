@@ -14,7 +14,8 @@
 
 use mastdiff::{
     ast_cache::AstCache,
-    search::{parse_query, search_project_streaming, SearchQuery, SearchResult},
+    search::{parse_query, search_project, search_project_streaming, SearchQuery, SearchResult},
+    symcache::SymCache,
     tracer,
 };
 use std::sync::atomic::AtomicBool;
@@ -157,6 +158,61 @@ fn main() {
             files.len(),
         );
     }
+
+    // ── Persistent symbol cache (ccache-style) ────────────────────────────
+    // Compares, per query: the cold baseline (fresh process, full parse — what
+    // a one-shot CLI invocation pays today) against the persistent SymCache
+    // both cold (first run: parse + extract all buckets + write to disk) and
+    // warm (a later process: read precomputed captures, no parse, no walk).
+    let cache_root = std::env::temp_dir().join(format!("mastdiff-bench-symcache-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache_root);
+    println!("\npersistent symbol cache  (ccache-style, content-addressed)");
+    println!(
+        "{:<14}  {:>7}  {:>11}  {:>10}  {:>10}  {:>8}",
+        "query", "hits", "baseline ms", "cold ms", "warm ms", "speedup"
+    );
+    println!("{}", "-".repeat(70));
+
+    for (i, (_label, query_str)) in queries.iter().enumerate() {
+        let query = parse_query(query_str);
+
+        // Baseline: the existing cache-less rayon search — a full parse + query
+        // walk of every file. Same harness shape as SymCache::search_project, so
+        // the comparison isolates the cache, not channel/threading overhead.
+        let baseline = {
+            let t = Instant::now();
+            let _ = search_project(&files, &query);
+            t.elapsed().as_secs_f64() * 1_000.0
+        };
+
+        // Truly-cold dir per query: parse, extract all buckets, persist.
+        let cold_dir = cache_root.join(format!("cold{i}"));
+        let cold_ms = {
+            let sc = SymCache::open_in(cold_dir.clone(), 256);
+            let t = Instant::now();
+            let _ = sc.search_project(&files, &query);
+            t.elapsed().as_secs_f64() * 1_000.0
+        };
+
+        // Warm: reopen (simulating a fresh process) → read precomputed captures.
+        let mut warm_sum = 0.0;
+        let mut hits = 0;
+        for _ in 0..runs.max(1) {
+            let sc = SymCache::open_in(cold_dir.clone(), 256);
+            let t = Instant::now();
+            let (r, _) = sc.search_project(&files, &query);
+            warm_sum += t.elapsed().as_secs_f64() * 1_000.0;
+            hits = r.len();
+        }
+        let warm_ms = warm_sum / runs.max(1) as f64;
+        let speedup = if warm_ms > 0.0 { baseline / warm_ms } else { 0.0 };
+
+        println!(
+            "{:<14}  {:>7}  {:>11.1}  {:>10.1}  {:>10.1}  {:>7.1}x",
+            query_str, hits, baseline, cold_ms, warm_ms, speedup,
+        );
+    }
+    let _ = std::fs::remove_dir_all(&cache_root);
 
     // Per-span time rollup — shows where the warm-run time actually goes
     // (parse should be near-zero once the cache is warm).
