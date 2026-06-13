@@ -15,12 +15,16 @@ main.rs
   │
   ├─ config.rs          User configuration (~/.config/mastdiff/config.toml)
   ├─ logger.rs          File-based logging (mastdiff.log)
+  ├─ tracer.rs          Chrome-trace span collector (--features bench only)
+  ├─ daemon.rs          Persistent TCP search server (mastdiff --daemon)
   │
   ├─ app.rs             Central state machine (App struct + event handlers)
   │    │
   │    ├─ text_diff.rs  Myers diff of two text files (DiffLine vec)
   │    ├─ ast_diff.rs   tree-sitter parse → AstLine flat tree; LCS diff
   │    ├─ search.rs     Query parsing, shorthand expansion, parallel search
+  │    ├─ ast_cache.rs  In-memory (mtime, Tree) cache for repeated searches
+  │    ├─ symcache.rs   Persistent content-addressed symbol cache (L1 + L2)
   │    ├─ project.rs    Project discovery (files, headers, CMake targets)
   │    ├─ syntax.rs     Syntax highlighting (SyntaxSpan vec per line)
   │    ├─ input.rs      Editable text-input widget (TextInput)
@@ -52,6 +56,13 @@ In project mode a background thread is spawned immediately and sends
 `project::LoadMsg` batches to the main loop over an `mpsc::channel`.
 The TUI is interactive from the first frame — the loading spinner animates
 while files trickle in.
+
+Two **headless** modes run before any `App` is built and exit without a TUI:
+
+| CLI invocation | Handler | Behaviour |
+|---|---|---|
+| `mastdiff --search <query> [path]` | `headless_search` | Print results and exit. Delegates to a running daemon if one exists; otherwise runs in-process, serving shorthand queries from the persistent symbol cache (`symcache.rs`). |
+| `mastdiff --daemon <root>` | `daemon::run_daemon` | Persistent TCP server keeping caches warm; pre-warms the symbol cache on startup. |
 
 ---
 

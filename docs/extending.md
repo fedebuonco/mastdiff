@@ -22,16 +22,26 @@ const QUERY_STATIC_ASSERT: &str = "(static_assert_declaration condition: _ @matc
 
 ### 2. Register the shorthand (`src/search.rs`)
 
-In the `shorthands` array inside `parse_query()` add a tuple:
+Add a row to the `INDEX_BUCKETS` table — the single source of truth used by
+both `parse_query()` and the persistent symbol cache:
 ```rust
-("sassert:", QUERY_STATIC_ASSERT, true),
-//  ^prefix     ^ts_query          ^needs text filter?
+(16, "sassert:", QUERY_STATIC_ASSERT, false),
+//   ^bucket id   ^prefix   ^ts_query   ^filter_nested_calls
 ```
 
-`needs_text_filter = true` means the text after the colon is used as a
-substring filter against the captured node's text (e.g. `fn:myFunc`).
-Set it to `false` for shorthands where you always want all matches
-(e.g. `throw:`, `lambda:`).
+The bucket id must be **unique and appended, never renumbered** — it is
+embedded in the on-disk symbol cache. (Renumbering or changing a bucket's
+query means bumping `SCHEMA` in `symcache.rs` so old caches are discarded.)
+
+`filter_nested_calls` is a `call:`-specific flag (skip calls nested inside
+another call's argument list); leave it `false` for normal shorthands.
+
+That's all that's needed — the text after the colon is automatically used as
+a substring filter against the captured node's text (e.g. `fn:myFunc`), and
+the new bucket flows into the symbol cache's combined extraction query for
+free. A query whose node types are absent from the bundled grammar simply
+won't compile and is skipped (and returns nothing live), so no schema bump is
+required for grammar-unsupported additions.
 
 ### 3. Colour-code the hint chip (`src/ui/search_view.rs`)
 

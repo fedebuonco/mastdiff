@@ -9,11 +9,12 @@ architecture, data model, and extension points of the codebase.
 
 | File | Contents |
 |---|---|
-| [architecture.md](architecture.md) | High-level component map, startup modes, main event loop, `AppMode` state machine, data-flow diagram, threading model |
+| [architecture.md](architecture.md) | High-level component map, startup modes (incl. headless `--search`/`--daemon`), main event loop, `AppMode` state machine, data-flow diagram, threading model |
 | [app_state.md](app_state.md) | Complete reference for the `App` struct — every field group explained, all key methods listed |
-| [ast_and_search.md](ast_and_search.md) | `AstLine` struct, parse/flatten/diff pipeline, `SearchQuery` type, shorthand expansion table, `search_project_streaming` internals, syntax highlighting |
+| [ast_and_search.md](ast_and_search.md) | `AstLine` struct, parse/flatten/diff pipeline, `SearchQuery` type, shorthand expansion table, `search_project_streaming` internals, AST cache + persistent symbol cache, syntax highlighting |
 | [project_discovery.md](project_discovery.md) | Project loader: directory walk, header association, CMake parsing, `LoadMsg` streaming protocol, `ProjectRow` flat display list |
 | [ui_rendering.md](ui_rendering.md) | Renderer dispatch, search view layout, source pane, AST tree and timeline renderers, colour conventions |
+| [performance.md](performance.md) | Benchmark binary + tracer, search optimisations, in-memory AST cache, and the persistent content-addressed symbol cache (L1/L2) |
 | [extending.md](extending.md) | Step-by-step guides: add a search shorthand, add an AST viz mode, add an `AppMode`, tune performance, add a config key |
 
 ---

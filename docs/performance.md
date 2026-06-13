@@ -18,10 +18,20 @@ cargo run --release --features bench --bin bench -- <dir> [--output trace.json] 
 
 The binary:
 1. Collects C++ files via `walkdir` (same logic as the real app).
-2. Runs one warmup pass to prime the OS file cache.
-3. Times each query type for `--runs` iterations using the same
-   `search_project` path the app uses.
-4. Writes a **Chrome Trace Event Format** JSON file with per-phase spans.
+2. For each query type, reports the **in-memory AST cache** behaviour — a
+   `cold` run (empty cache → every file parsed) and the `warm` average
+   (cache populated → parses skipped), plus the speedup and cache hit-rate.
+3. Then measures the **persistent symbol cache** per query: `baseline`
+   (cache-less full parse), `cold` (first index build), `disk (L2)` (a fresh
+   process reading precomputed captures), and `mem (L1)` (an in-process repeat
+   served from RAM).
+4. Prints a per-span time rollup (via `tracer::summary()`) so the shift in
+   where time goes — parse collapsing, walk_captures dominating warm runs — is
+   visible without opening the flame graph.
+5. Writes a **Chrome Trace Event Format** JSON file with per-phase spans.
+
+Flags: `--runs <n>` (warm iterations averaged), `--cache-mb <n>` (in-memory
+AST cache size), `--output <path>` (trace file).
 
 ---
 
@@ -176,19 +186,75 @@ no-op when `capture_filter_cmp` is empty.
 
 ---
 
-## Current bottleneck (after both optimisations)
+## Optimisation 3 — in-memory AST cache (`src/ast_cache.rs`)
 
-For unfiltered queries, `parser.parse()` is the floor:
+After optimisations 1 and 2, for unfiltered queries `parser.parse()` is the
+floor (~1.15 ms/file, p99 12.6 ms — high variance, driven by file size).
+
+**Fix.**  `AstCache` stores `(mtime, Tree)` per file, capped by
+`ast_cache_mb` (default 128). `search_project_streaming` looks up each file
+before parsing and clones the cached `Tree` on a hit (a cheap
+`ts_tree_copy`), so a repeated search over an unchanged codebase pays only
+the `walk_captures` cost. The cache is **per-process** — it is lost on exit,
+which is what the search daemon (`mastdiff --daemon`) exists to keep alive
+between one-shot `--search` invocations.
+
+---
+
+## Optimisation 4 — persistent symbol cache (`src/symcache.rs`)
+
+The in-memory AST cache dies with the process: a one-shot `mastdiff --search`
+always pays a full cold parse, and tree-sitter `Tree`s aren't serializable so
+the parse can't simply be persisted.
+
+**Fix.**  Persist the parse's *derived product*. For each file, parse once
+with a **combined query** (the union of every shorthand bucket — `fn:`,
+`call:`, `class:`, …) and store the resulting captures on disk under
+`$XDG_CACHE_HOME/mastdiff/`, keyed by a hash of the file's bytes
+(content-addressed, ccache-style). A later shorthand search loads that index
+and filters the relevant bucket — **no parse, no query walk**. One
+content-keyed index serves all 16 buckets, so the build cost is paid once per
+file version, not per query. Raw S-expression and grep queries can't be
+pre-extracted and fall through to the live parse path unchanged.
+
+Two layers sit in front of the disk store:
 
 ```
-per file CPU time — unfiltered query (e.g. fn:)
-  parse             ~1.15 ms/file   71%   unavoidable
-  walk_captures     ~0.41 ms/file   26%
-  file read         ~0.05 ms/file    3%
+query for a shorthand bucket
+  ├─ L1  in-memory FileIndex   (path+mtime keyed)  → filter only
+  ├─ L2  on-disk JSON index    (content-hash keyed) → read + deserialize + filter
+  └─ miss → parse once (combined query) → write L2 + L1 → filter
 ```
 
-Parse cost has high variance (p50: 0.33 ms, p99: 12.6 ms, max: 136 ms)
-driven by file size.  The next meaningful optimisation would be an **AST
-cache** — storing `(mtime, Tree)` per file and skipping re-parse when the
-file has not changed.  This would reduce repeated searches over the same
-codebase to essentially the `walk_captures` cost alone.
+- **L1** holds deserialized `FileIndex` objects in RAM (128 MiB budget, FIFO
+  eviction). An in-process repeat — the daemon serving many queries, or the
+  TUI searching as you type — skips the file read, the disk read, *and*
+  deserialization, paying only the filter.
+- **L2** is the persistent, content-addressed store, bounded by a hard
+  `sym_cache_mb` cap (default 256, `0` disables). Content-addressed entries
+  are never stale, only abandoned when a file changes, so when a write crosses
+  the cap the oldest entries are evicted down to a ~90% low-water mark — the
+  directory can't grow without bound. Writes are temp-file + atomic-rename for
+  safe concurrent CLI/daemon access; old schema dirs are GC'd on open.
+
+**Result** (720-file synthetic corpus, 4 threads):
+
+| Query | baseline (cold parse) | L2 disk | L1 mem | L1 speedup |
+|-------|----------------------|---------|--------|-----------|
+| `fn:` | 148 ms | 13 ms | 2.5 ms | **60×** |
+| `var:` | 154 ms | 13 ms | 1.5 ms | **100×** |
+| `fn:update` | 153 ms | 11 ms | 0.8 ms | **196×** |
+
+Grep and raw S-expression queries are unchanged (not indexable). The first
+(cold) build is ~20 ms and shared across every bucket.
+
+---
+
+## Current bottleneck
+
+For a true cold search (first ever, empty caches), `parser.parse()` is still
+the floor. Every layer above targets *repeats*: the AST cache for in-process
+repeats of raw/grep queries, and the symbol cache (L1 + L2) for shorthand
+queries within and across processes. The remaining opportunity is **eager
+background indexing** — warming files the first query's filter skipped, so even
+a first-touch query on a not-yet-seen file is served warm.
