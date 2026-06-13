@@ -8,4 +8,5 @@ pub mod daemon;
 pub mod input;
 pub mod project;
 pub mod search;
+pub mod symcache;
 pub mod text_diff;

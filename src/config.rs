@@ -95,9 +95,19 @@ pub struct Config {
     /// Set to 0 to disable caching entirely.  Default: 128.
     #[serde(default = "default_ast_cache_mb")]
     pub ast_cache_mb: u64,
+
+    /// Hard size cap (in MiB) for the persistent, content-addressed symbol
+    /// cache on disk (`$XDG_CACHE_HOME/mastdiff/`). Precomputed shorthand-query
+    /// captures are stored there so cold searches skip re-parsing across
+    /// process restarts. When a write crosses the cap the oldest entries are
+    /// evicted back under it, so the directory can't grow without bound.
+    /// Set to 0 to disable the persistent cache entirely.  Default: 256.
+    #[serde(default = "default_sym_cache_mb")]
+    pub sym_cache_mb: u64,
 }
 
 fn default_ast_cache_mb() -> u64 { 128 }
+fn default_sym_cache_mb() -> u64 { 256 }
 
 impl Default for Config {
     fn default() -> Self {
@@ -105,6 +115,7 @@ impl Default for Config {
             open_in: OpenIn::default(),
             log_level: LogLevel::default(),
             ast_cache_mb: default_ast_cache_mb(),
+            sym_cache_mb: default_sym_cache_mb(),
         }
     }
 }
@@ -244,5 +255,22 @@ mod tests {
     fn ast_cache_mb_zero_disables() {
         let cfg: Config = toml::from_str("ast_cache_mb = 0").unwrap();
         assert_eq!(cfg.ast_cache_mb, 0);
+    }
+
+    #[test]
+    fn default_sym_cache_mb_is_256() {
+        assert_eq!(Config::default().sym_cache_mb, 256);
+    }
+
+    #[test]
+    fn parse_sym_cache_mb() {
+        let cfg: Config = toml::from_str("sym_cache_mb = 512").unwrap();
+        assert_eq!(cfg.sym_cache_mb, 512);
+    }
+
+    #[test]
+    fn sym_cache_mb_zero_disables() {
+        let cfg: Config = toml::from_str("sym_cache_mb = 0").unwrap();
+        assert_eq!(cfg.sym_cache_mb, 0);
     }
 }

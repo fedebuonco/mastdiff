@@ -38,6 +38,7 @@ use crate::ast_cache::AstCache;
 use crate::config::Config;
 use crate::project;
 use crate::search;
+use crate::symcache::SymCache;
 
 const IDLE_TIMEOUT_SECS: u64 = 300;
 const FILE_REFRESH_SECS: u64 = 30;
@@ -162,15 +163,19 @@ struct DaemonState {
     files: Vec<String>,
     last_refresh: Instant,
     ast_cache: Arc<Mutex<AstCache>>,
+    /// Persistent on-disk symbol cache — shorthand queries are served from
+    /// here, so a restarted daemon comes up warm from disk.
+    symcache: Arc<SymCache>,
 }
 
 impl DaemonState {
-    fn new(root: PathBuf, files: Vec<String>, cap_mb: u64) -> Self {
+    fn new(root: PathBuf, files: Vec<String>, cap_mb: u64, sym_cache_mb: u64) -> Self {
         Self {
             root,
             files,
             last_refresh: Instant::now(),
             ast_cache: Arc::new(Mutex::new(AstCache::new(cap_mb))),
+            symcache: Arc::new(SymCache::open(sym_cache_mb)),
         }
     }
 
@@ -209,7 +214,12 @@ pub fn run_daemon(root: &Path, cfg: &Config) -> Result<()> {
 
     eprintln!("READY {}", port);
 
-    let state = Arc::new(Mutex::new(DaemonState::new(root, files, cfg.ast_cache_mb)));
+    let state = Arc::new(Mutex::new(DaemonState::new(
+        root,
+        files,
+        cfg.ast_cache_mb,
+        cfg.sym_cache_mb,
+    )));
 
     // Idle watchdog — exits after IDLE_TIMEOUT_SECS of no connections.
     let last_activity = Arc::new(AtomicU64::new(unix_now()));
@@ -227,20 +237,23 @@ pub fn run_daemon(root: &Path, cfg: &Config) -> Result<()> {
         });
     }
 
-    // Background pre-warm: run `fn:` search to parse and cache every source file.
+    // Background pre-warm: run a `fn:` search through the symbol cache. Because
+    // one content-keyed index covers every bucket, this builds (and persists)
+    // the full per-file index for the whole tree — so the daemon, and any later
+    // process sharing the disk cache, start warm.
     {
         let state2 = Arc::clone(&state);
         std::thread::spawn(move || {
-            let (files, ast_cache) = {
+            let (files, symcache) = {
                 let st = state2.lock().unwrap();
-                (st.files.clone(), Arc::clone(&st.ast_cache))
+                (st.files.clone(), Arc::clone(&st.symcache))
             };
-            log::info!("daemon: pre-warming AST cache ({} files)", files.len());
+            log::info!("daemon: pre-warming symbol cache ({} files)", files.len());
             let query = search::parse_query("fn:");
             let cancel = Arc::new(AtomicBool::new(false));
             let (tx, rx) = std::sync::mpsc::sync_channel(512);
             std::thread::spawn(move || {
-                let _ = search::search_project_streaming(&files, &query, tx, cancel, ast_cache);
+                let _ = symcache.search_streaming(&files, &query, tx, cancel);
             });
             let mut n = 0usize;
             while let Ok(batch) = rx.recv() {
@@ -294,7 +307,7 @@ fn handle_conn(stream: TcpStream, state: Arc<Mutex<DaemonState>>) -> Result<()> 
     };
     log::debug!("daemon: search {:?}", req.query);
 
-    let (files, ast_cache) = {
+    let (files, ast_cache, symcache) = {
         let mut st = state.lock().unwrap();
         st.refresh_if_stale();
         let root_str = st.root.to_string_lossy().to_string();
@@ -314,7 +327,7 @@ fn handle_conn(stream: TcpStream, state: Arc<Mutex<DaemonState>>) -> Result<()> 
             })
             .cloned()
             .collect();
-        (files, Arc::clone(&st.ast_cache))
+        (files, Arc::clone(&st.ast_cache), Arc::clone(&st.symcache))
     };
 
     let mut query = search::parse_query(&req.query);
@@ -352,11 +365,21 @@ fn handle_conn(stream: TcpStream, state: Arc<Mutex<DaemonState>>) -> Result<()> 
         });
     }
 
+    // Shorthand queries (fn:, call:, …) go through the persistent symbol cache
+    // — served from disk, no re-parse. Raw S-expr and grep queries can't be
+    // pre-extracted, so they take the live streaming path with the warm
+    // in-memory AST cache.
+    let use_symcache =
+        symcache.is_enabled() && search::bucket_of_query(&query.ts_query_src).is_some();
     let search_cancel = Arc::clone(&cancel);
     let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<search::SearchResult>>(256);
     let (stats_tx, stats_rx) = std::sync::mpsc::channel::<usize>();
     std::thread::spawn(move || {
-        let cache_hits = search::search_project_streaming(&files, &query, tx, search_cancel, ast_cache);
+        let cache_hits = if use_symcache {
+            symcache.search_streaming(&files, &query, tx, search_cancel)
+        } else {
+            search::search_project_streaming(&files, &query, tx, search_cancel, ast_cache)
+        };
         let _ = stats_tx.send(cache_hits);
     });
 

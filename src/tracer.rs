@@ -77,6 +77,25 @@ mod inner {
 
     pub fn count() -> usize { store().lock().unwrap().len() }
 
+    /// Aggregate recorded spans by name: `(name, total_micros, call_count)`,
+    /// sorted by total time descending. Lets the bench print a rollup like
+    /// "search::src::parse  812ms  ×720" so a cache's effect on parse time is
+    /// obvious without opening the flame graph.
+    pub fn summary() -> Vec<(&'static str, u64, usize)> {
+        let spans = store().lock().unwrap();
+        let mut totals: std::collections::HashMap<&'static str, (u64, usize)> =
+            std::collections::HashMap::new();
+        for s in spans.iter() {
+            let e = totals.entry(s.name).or_insert((0, 0));
+            e.0 += s.dur.as_micros() as u64;
+            e.1 += 1;
+        }
+        let mut out: Vec<(&'static str, u64, usize)> =
+            totals.into_iter().map(|(n, (us, c))| (n, us, c)).collect();
+        out.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        out
+    }
+
     pub fn save(path: &str) -> std::io::Result<()> {
         let epoch = epoch();
         let spans = store().lock().unwrap();
@@ -151,8 +170,9 @@ mod inner {
     #[inline(always)] pub fn span(_: &'static str) -> Span { Span }
     #[inline(always)] pub fn clear() {}
     #[inline(always)] pub fn count() -> usize { 0 }
+    #[inline(always)] pub fn summary() -> Vec<(&'static str, u64, usize)> { Vec::new() }
     #[inline(always)] pub fn save(_: &str) -> std::io::Result<()> { Ok(()) }
 }
 
 pub use inner::{init, span, save};
-#[allow(unused)] pub use inner::{clear, count, Span};
+#[allow(unused)] pub use inner::{clear, count, summary, Span};

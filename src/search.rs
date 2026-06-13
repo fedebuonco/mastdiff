@@ -135,6 +135,53 @@ const QUERY_CAST: &str = "
 (const_cast_expression type: _ @match)
 ";
 
+// ── Shorthand bucket table ────────────────────────────────────────────────
+//
+// Single source of truth for the shorthand prefixes: used by `parse_query`
+// to expand `fn:`, `call:`, … and by the persistent symbol cache to build a
+// combined query that extracts every bucket in one parse.
+//
+// Tuple: (bucket id, prefix, tree-sitter query source, filter_nested_calls).
+// The id is stable and embedded in the on-disk cache — only append, never
+// renumber, or bump the cache schema version.
+
+pub(crate) const INDEX_BUCKETS: &[(u8, &str, &str, bool)] = &[
+    (0,  "fn:",      QUERY_FN,      false),
+    (1,  "call:",    QUERY_CALL,    true),  // skip calls nested inside argument lists
+    (2,  "var:",     QUERY_VAR,     false),
+    (3,  "class:",   QUERY_CLASS,   false),
+    (4,  "type:",    QUERY_TYPE,    false),
+    (5,  "include:", QUERY_INCLUDE, false),
+    (6,  "param:",   QUERY_PARAM,   false),
+    (7,  "field:",   QUERY_FIELD,   false),
+    (8,  "lambda:",  QUERY_LAMBDA,  false),
+    (9,  "macro:",   QUERY_MACRO,   false),
+    (10, "ns:",      QUERY_NS,      false),
+    (11, "op:",      QUERY_OP,      false),
+    (12, "using:",   QUERY_USING,   false),
+    (13, "tpl:",     QUERY_TPL,     false),
+    (14, "throw:",   QUERY_THROW,   false),
+    (15, "cast:",    QUERY_CAST,    false),
+];
+
+/// The bucket id whose predefined query source equals `ts_query_src`, if any.
+/// Raw S-expression queries (typed directly by the user) match nothing.
+pub(crate) fn bucket_of_query(ts_query_src: &str) -> Option<u8> {
+    INDEX_BUCKETS
+        .iter()
+        .find(|(_, _, src, _)| *src == ts_query_src)
+        .map(|(id, _, _, _)| *id)
+}
+
+/// `filter_nested_calls` flag for a bucket id (only the `call:` bucket sets it).
+pub(crate) fn bucket_filters_nested(id: u8) -> bool {
+    INDEX_BUCKETS
+        .iter()
+        .find(|(bid, _, _, _)| *bid == id)
+        .map(|(_, _, _, fnst)| *fnst)
+        .unwrap_or(false)
+}
+
 // ── Query model ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -186,25 +233,7 @@ pub fn parse_query(raw: &str) -> SearchQuery {
     }
 
     // Shorthand prefixes → predefined queries
-    let shorthands: &[(&str, &str, bool)] = &[
-        ("fn:",      QUERY_FN,      false),
-        ("call:",    QUERY_CALL,    true),  // skip calls nested inside argument lists
-        ("var:",     QUERY_VAR,     false),
-        ("class:",   QUERY_CLASS,   false),
-        ("type:",    QUERY_TYPE,    false),
-        ("include:", QUERY_INCLUDE, false),
-        ("param:",   QUERY_PARAM,   false),
-        ("field:",   QUERY_FIELD,   false),
-        ("lambda:",  QUERY_LAMBDA,  false),
-        ("macro:",   QUERY_MACRO,   false),
-        ("ns:",      QUERY_NS,      false),
-        ("op:",      QUERY_OP,      false),
-        ("using:",   QUERY_USING,   false),
-        ("tpl:",     QUERY_TPL,     false),
-        ("throw:",   QUERY_THROW,   false),
-        ("cast:",    QUERY_CAST,    false),
-    ];
-    for (prefix, ts_query, filter_nested) in shorthands {
+    for (_id, prefix, ts_query, filter_nested) in INDEX_BUCKETS {
         if let Some(rest) = trimmed.strip_prefix(prefix) {
             log::debug!(
                 "parse_query: shorthand {:?} filter={:?} nested_filter={}",
@@ -237,7 +266,7 @@ pub fn parse_query(raw: &str) -> SearchQuery {
 
 // ── Result model ──────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchResult {
     pub file_path: String,
     pub line: usize,
@@ -835,7 +864,7 @@ pub fn search_src(file_path: &str, src: &str, query: &SearchQuery) -> Vec<Search
 /// Learned from ripgrep: unbounded result accumulation in parallel workers can
 /// cause runaway memory use on pathological inputs. A per-file cap keeps both
 /// memory and result-list rendering bounded.
-const MAX_RESULTS_PER_FILE: usize = 500;
+pub(crate) const MAX_RESULTS_PER_FILE: usize = 500;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -844,7 +873,7 @@ const MAX_RESULTS_PER_FILE: usize = 500;
 ///
 /// Example: `foo(bar())` → `bar` is nested, `foo` is not.
 /// Example: `foo(x * bar())` → `bar` is nested (inside binary_expression inside argument_list).
-fn call_is_nested(captured_node: tree_sitter::Node) -> bool {
+pub(crate) fn call_is_nested(captured_node: tree_sitter::Node) -> bool {
     // Step 1: walk up to find the call_expression that owns this capture.
     let mut n = captured_node;
     let call_expr = loop {
@@ -950,7 +979,7 @@ fn grep(file_path: &str, src: &str, text: &str, use_regex: bool, case_sensitive:
     }
 }
 
-fn make_snippet(line: &str, col: usize) -> String {
+pub(crate) fn make_snippet(line: &str, col: usize) -> String {
     // col is a byte offset from tree-sitter; convert to char count safely.
     let col_char = line[..col.min(line.len())].chars().count();
     let start_char = col_char.saturating_sub(4);

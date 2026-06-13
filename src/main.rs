@@ -18,6 +18,7 @@ mod input;
 mod logger;
 mod project;
 mod search;
+mod symcache;
 mod syntax;
 mod text_diff;
 mod tracer;
@@ -67,7 +68,7 @@ struct Cli {
 
 /// Headless search mode (`--search`): try the daemon first for a warm-cache
 /// hit, then fall back to a cold in-process search if no daemon is running.
-fn headless_search(root: &str, raw_query: &str, cli: &Cli) -> Result<()> {
+fn headless_search(root: &str, raw_query: &str, cli: &Cli, cfg: &config::Config) -> Result<()> {
     use std::io::Write;
 
     let root_path = Path::new(root);
@@ -136,7 +137,18 @@ fn headless_search(root: &str, raw_query: &str, cli: &Cli) -> Result<()> {
     query.use_regex = cli.regex;
     query.case_sensitive = cli.case_sensitive;
 
-    let results = search::search_project(&files, &query);
+    // Serve shorthand queries from the persistent symbol cache: the first cold
+    // search builds the on-disk index, later invocations skip re-parsing.
+    // Raw S-expr / grep queries fall through to a live parse inside SymCache.
+    let symcache = symcache::SymCache::open(cfg.sym_cache_mb);
+    let (results, hits) = symcache.search_project(&files, &query);
+    if symcache.is_enabled() {
+        let (bytes, entries) = symcache.stats();
+        log::info!(
+            "headless search (in-process): {} hits, {}/{} files from disk cache ({} entries, {:.1} MiB)",
+            results.len(), hits, files.len(), entries, bytes as f64 / (1024.0 * 1024.0),
+        );
+    }
 
     let mut file_lines: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     for r in &results {
@@ -196,7 +208,7 @@ fn main() -> Result<()> {
     // Headless search mode — print results and exit, no TUI.
     if let Some(ref raw_query) = cli.search {
         let root = cli.left.as_deref().unwrap_or(".");
-        return headless_search(root, raw_query, &cli);
+        return headless_search(root, raw_query, &cli, &cfg);
     }
 
     let left = cli.left.clone().expect("clap enforces left unless --search");
