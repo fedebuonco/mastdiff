@@ -407,6 +407,39 @@ impl SymCache {
         (results, hits.into_inner())
     }
 
+    /// Streaming variant for the daemon: sends batches of hits through `tx` as
+    /// files are searched and bails out when `cancel` is set, preserving the
+    /// daemon's incremental + cancellable behavior. Returns the number of files
+    /// served from disk without a re-parse.
+    pub fn search_streaming(
+        &self,
+        files: &[String],
+        query: &SearchQuery,
+        tx: std::sync::mpsc::SyncSender<Vec<SearchResult>>,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> usize {
+        use rayon::prelude::*;
+        use std::sync::atomic::AtomicUsize;
+
+        if query.is_empty() {
+            return 0;
+        }
+        let hits = AtomicUsize::new(0);
+        files.par_iter().for_each_with(tx, |tx, f| {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let (r, hit) = self.search_file(f, query);
+            if hit {
+                hits.fetch_add(1, Ordering::Relaxed);
+            }
+            if !r.is_empty() {
+                let _ = tx.send(r); // receiver gone (cancelled) → drop silently
+            }
+        });
+        hits.into_inner()
+    }
+
     /// On-disk byte total and entry count, for `--cache stats`.
     pub fn stats(&self) -> (u64, usize) {
         let Some(dir) = self.dir.as_ref() else { return (0, 0) };
