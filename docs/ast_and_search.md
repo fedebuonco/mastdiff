@@ -72,18 +72,14 @@ them by calling `rebuild_ast_visible()` whenever collapse or filter changes.
 ### `SearchQuery`
 
 ```rust
-pub enum SearchQuery {
-    TsQuery {
-        ts_source: String,       // raw S-expression forwarded to tree-sitter
-        text_filter: String,     // additional substring filter on the captured text
-        use_regex: bool,
-        case_sensitive: bool,
-    },
-    Grep {
-        pattern: String,
-        use_regex: bool,
-        case_sensitive: bool,
-    },
+pub struct SearchQuery {
+    pub raw: String,                 // the text the user typed
+    pub ts_query_src: String,        // S-expression source (empty in grep mode)
+    pub capture_filter: String,      // substring filter on the captured node text
+    pub grep_mode: bool,             // true → plain-text grep, ignore ts_query_src
+    pub filter_nested_calls: bool,   // call: → skip calls nested in argument lists
+    pub use_regex: bool,             // treat the filter / grep pattern as a regex
+    pub case_sensitive: bool,        // default is case-insensitive
 }
 ```
 
@@ -91,10 +87,13 @@ Produced by `parse_query(input: &str)` from the raw text the user typed.
 
 ### `parse_query` — shorthand expansion
 
-`parse_query` checks the input against a table of `(prefix, ts_query,
-needs_text_filter)` triples.  When a match is found the ts_query is used
-verbatim (it always captures `@match`).  If `needs_text_filter` is true, the
-text after the colon becomes the `text_filter`.
+`parse_query` checks the input against `INDEX_BUCKETS` — the single source of
+truth for shorthand prefixes, a slice of `(bucket id, prefix, ts_query,
+filter_nested_calls)`. When a prefix matches, its `ts_query` (which always
+captures `@match`) is used verbatim and the text after the colon becomes the
+`capture_filter`. The same table is consumed by the persistent symbol cache
+(`symcache.rs`) to build a combined extraction query, so adding a shorthand
+here automatically makes it cacheable.
 
 Current shorthands:
 
@@ -125,10 +124,14 @@ Otherwise, plain grep mode.
 
 ```rust
 pub struct SearchResult {
-    pub file:    String,   // absolute path
-    pub line:    usize,    // 0-indexed line of the match
-    pub col:     usize,    // 0-indexed char column
-    pub snippet: String,   // the matched line text
+    pub file_path:    String,   // absolute path
+    pub line:         usize,    // 0-indexed line of the match
+    pub col:          usize,    // 0-indexed byte column
+    pub end_line:     usize,    // end of the matched node (for editor highlight)
+    pub end_col:      usize,
+    pub snippet:      String,   // trimmed source snippet around the match
+    pub node_kind:    String,   // tree-sitter node kind, e.g. "identifier"
+    pub capture_name: String,   // capture name in the query (e.g. "match")
 }
 ```
 
@@ -142,6 +145,30 @@ that a new search can preempt the current one with minimal latency.
 For tree-sitter queries, a `QueryCursor` is created once per file.
 For grep, a `regex::Regex` is compiled once outside the parallel loop and
 shared (it is `Send + Sync`).
+
+An `Arc<Mutex<AstCache>>` is threaded through: before the parallel phase it
+bulk-fetches cached `Tree`s (by `(path, mtime)`) under a single lock, and
+after the search it merges newly parsed trees back in. The return value is the
+number of files served from the warm cache.
+
+### Persistent symbol cache (`src/symcache.rs`)
+
+For shorthand queries, the headless `--search` path and the daemon route
+through `SymCache` instead of re-parsing. `SymCache::search_file`:
+
+1. **L1** — return the in-memory `FileIndex` if `(path, mtime)` still matches
+   (no file read at all).
+2. **L2** — read the file, hash its bytes, and load the on-disk index keyed by
+   that hash; promote it into L1.
+3. **Miss** — parse once with the *combined* query (all buckets via
+   `INDEX_BUCKETS`, each `@match` renamed to `@b<id>`), write the index to L2
+   and L1, then serve.
+
+`serve` reproduces the live path's semantics exactly — capture filter
+(regex / case-insensitive substring), the `call:` nested-call filter, and the
+`MAX_RESULTS_PER_FILE` cap — so cached results are byte-identical to a live
+search (asserted by a golden test). Raw S-expression and grep queries are not
+indexable and fall back to the live parse path.
 
 ### `FileFilter`
 
