@@ -33,8 +33,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Parser, Query, QueryCursor};
 
@@ -54,6 +56,10 @@ const MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
 /// Low-water target after a sweep, as a fraction of the cap. Hysteresis so we
 /// don't sweep on every write once near the cap.
 const LOW_WATER: f64 = 0.9;
+
+/// In-memory (L1) budget for deserialized indices, in bytes. Bounds the RAM
+/// held by a long-lived process (daemon, TUI) that runs many queries.
+const MEM_CAP_BYTES: usize = 128 * 1024 * 1024;
 
 // ── Artifact ────────────────────────────────────────────────────────────────
 
@@ -225,6 +231,30 @@ fn serve(index: &FileIndex, file_path: &str, query: &SearchQuery, bucket: u8) ->
 
 // ── Store ────────────────────────────────────────────────────────────────────
 
+/// L1: deserialized indices held in RAM, keyed by path and validated by mtime,
+/// so an in-process repeat (typing in the TUI, the daemon serving many queries)
+/// skips the file read, the disk read, and JSON deserialization — paying only
+/// the filter. FIFO eviction once the byte budget is exceeded.
+struct MemCache {
+    map: IndexMap<PathBuf, MemEntry>,
+    bytes: usize,
+}
+
+struct MemEntry {
+    mtime: SystemTime,
+    index: Arc<FileIndex>,
+    weight: usize,
+}
+
+fn index_weight(idx: &FileIndex) -> usize {
+    // Rough resident size: per-capture overhead plus the variable-length text.
+    idx.captures
+        .iter()
+        .map(|c| c.text.len() + c.snippet.len() + c.node_kind.len() + 48)
+        .sum::<usize>()
+        + 64
+}
+
 pub struct SymCache {
     /// `.../mastdiff/v{SCHEMA}` — None when disabled (cap == 0).
     dir: Option<PathBuf>,
@@ -234,6 +264,8 @@ pub struct SymCache {
     /// Serializes sweeps so concurrent writers in one process don't double-evict.
     sweep_lock: Mutex<()>,
     query: Option<Query>,
+    /// In-memory L1 layer (see [`MemCache`]).
+    mem: Mutex<MemCache>,
 }
 
 impl SymCache {
@@ -246,6 +278,7 @@ impl SymCache {
     /// Open a cache under an explicit root (used by tests and the bench so runs
     /// are isolated and reproducible).
     pub fn open_in(root: PathBuf, cap_mb: u64) -> Self {
+        let empty_mem = || Mutex::new(MemCache { map: IndexMap::new(), bytes: 0 });
         if cap_mb == 0 {
             return Self {
                 dir: None,
@@ -253,6 +286,7 @@ impl SymCache {
                 cur_bytes: AtomicU64::new(0),
                 sweep_lock: Mutex::new(()),
                 query: None,
+                mem: empty_mem(),
             };
         }
         // Drop stale schema dirs so an old format can't accumulate forever.
@@ -266,6 +300,40 @@ impl SymCache {
             cur_bytes: AtomicU64::new(cur),
             sweep_lock: Mutex::new(()),
             query: compile_combined_query(),
+            mem: empty_mem(),
+        }
+    }
+
+    /// L1 lookup: return the in-memory index for `path` if present and its
+    /// mtime still matches (stale entries are dropped).
+    fn mem_get(&self, path: &Path, mtime: SystemTime) -> Option<Arc<FileIndex>> {
+        let mut mem = self.mem.lock().unwrap();
+        match mem.map.get(path) {
+            Some(e) if e.mtime == mtime => Some(Arc::clone(&e.index)),
+            Some(_) => {
+                if let Some(old) = mem.map.swap_remove(path) {
+                    mem.bytes -= old.weight;
+                }
+                None
+            }
+            None => None,
+        }
+    }
+
+    /// L1 insert with FIFO eviction once over the RAM budget.
+    fn mem_put(&self, path: PathBuf, mtime: SystemTime, index: Arc<FileIndex>) {
+        let weight = index_weight(&index);
+        let mut mem = self.mem.lock().unwrap();
+        if let Some(old) = mem.map.swap_remove(&path) {
+            mem.bytes -= old.weight;
+        }
+        mem.map.insert(path, MemEntry { mtime, index, weight });
+        mem.bytes += weight;
+        while mem.bytes > MEM_CAP_BYTES {
+            match mem.map.shift_remove_index(0) {
+                Some((_, evicted)) => mem.bytes -= evicted.weight,
+                None => break,
+            }
         }
     }
 
@@ -357,6 +425,17 @@ impl SymCache {
         if !self.is_enabled() {
             return (search::search_file(file_path, query), false);
         }
+        let path = PathBuf::from(file_path);
+
+        // L1: a fresh-enough in-memory index serves without touching the disk
+        // or even re-reading the source file.
+        let mtime = fs::metadata(&path).and_then(|m| m.modified()).ok();
+        if let Some(mt) = mtime {
+            if let Some(idx) = self.mem_get(&path, mt) {
+                return (serve(&idx, file_path, query, bucket), true);
+            }
+        }
+
         let Ok(bytes) = fs::read(file_path) else {
             return (Vec::new(), false);
         };
@@ -364,18 +443,30 @@ impl SymCache {
             return (search::search_file(file_path, query), false);
         }
         let key = content_key(&bytes);
+
+        // L2: deserialize the on-disk index, promote it into L1, and serve.
         if let Some(idx) = self.load(&key) {
-            return (serve(&idx, file_path, query, bucket), true);
+            let idx = Arc::new(idx);
+            let results = serve(&idx, file_path, query, bucket);
+            if let Some(mt) = mtime {
+                self.mem_put(path, mt, idx);
+            }
+            return (results, true);
         }
-        // Miss: parse once, extract all buckets, store, then serve this bucket.
+
+        // Miss: parse once, extract all buckets, persist to L2 + L1, then serve.
         let Ok(src) = String::from_utf8(bytes) else {
             return (search::search_file(file_path, query), false);
         };
         let query_ts = self.query.as_ref().unwrap();
         match build_index(&src, query_ts) {
             Some(idx) => {
-                let results = serve(&idx, file_path, query, bucket);
                 self.store(&key, &idx);
+                let idx = Arc::new(idx);
+                let results = serve(&idx, file_path, query, bucket);
+                if let Some(mt) = mtime {
+                    self.mem_put(path, mt, idx);
+                }
                 (results, false)
             }
             None => (Vec::new(), false),

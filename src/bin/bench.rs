@@ -167,11 +167,16 @@ fn main() {
     let cache_root = std::env::temp_dir().join(format!("mastdiff-bench-symcache-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache_root);
     println!("\npersistent symbol cache  (ccache-style, content-addressed)");
+    println!("  baseline = cold parse   cold = first index build   disk = new process (L2)   mem = in-process repeat (L1)");
     println!(
-        "{:<14}  {:>7}  {:>11}  {:>10}  {:>10}  {:>8}",
-        "query", "hits", "baseline ms", "cold ms", "warm ms", "speedup"
+        "{:<14}  {:>7}  {:>10}  {:>9}  {:>9}  {:>9}  {:>8}",
+        "query", "hits", "baseline", "cold", "disk(L2)", "mem(L1)", "L1 vs base"
     );
-    println!("{}", "-".repeat(70));
+    println!("{}", "-".repeat(76));
+
+    // One long-lived cache instance — models the daemon / TUI serving many
+    // queries, where the in-memory L1 layer stays warm across calls.
+    let live_cache = SymCache::open_in(cache_root.join("live"), 256);
 
     for (i, (_label, query_str)) in queries.iter().enumerate() {
         let query = parse_query(query_str);
@@ -194,22 +199,34 @@ fn main() {
             t.elapsed().as_secs_f64() * 1_000.0
         };
 
-        // Warm: reopen (simulating a fresh process) → read precomputed captures.
-        let mut warm_sum = 0.0;
-        let mut hits = 0;
+        // Disk warm (L2): reopen each run (fresh process) → read + deserialize.
+        let mut disk_sum = 0.0;
         for _ in 0..runs.max(1) {
             let sc = SymCache::open_in(cold_dir.clone(), 256);
             let t = Instant::now();
-            let (r, _) = sc.search_project(&files, &query);
-            warm_sum += t.elapsed().as_secs_f64() * 1_000.0;
+            let _ = sc.search_project(&files, &query);
+            disk_sum += t.elapsed().as_secs_f64() * 1_000.0;
+        }
+        let disk_ms = disk_sum / runs.max(1) as f64;
+
+        // Mem warm (L1): reuse one instance → first call warms L1, the rest
+        // serve from RAM (no file read, no disk read, no deserialize).
+        let mut mem_sum = 0.0;
+        let mut hits = 0;
+        let warm_runs = runs.max(1);
+        let _ = live_cache.search_project(&files, &query); // warm L1
+        for _ in 0..warm_runs {
+            let t = Instant::now();
+            let (r, _) = live_cache.search_project(&files, &query);
+            mem_sum += t.elapsed().as_secs_f64() * 1_000.0;
             hits = r.len();
         }
-        let warm_ms = warm_sum / runs.max(1) as f64;
-        let speedup = if warm_ms > 0.0 { baseline / warm_ms } else { 0.0 };
+        let mem_ms = mem_sum / warm_runs as f64;
+        let speedup = if mem_ms > 0.0 { baseline / mem_ms } else { 0.0 };
 
         println!(
-            "{:<14}  {:>7}  {:>11.1}  {:>10.1}  {:>10.1}  {:>7.1}x",
-            query_str, hits, baseline, cold_ms, warm_ms, speedup,
+            "{:<14}  {:>7}  {:>9.1}  {:>9.1}  {:>9.1}  {:>9.1}  {:>7.1}x",
+            query_str, hits, baseline, cold_ms, disk_ms, mem_ms, speedup,
         );
     }
     let _ = std::fs::remove_dir_all(&cache_root);
